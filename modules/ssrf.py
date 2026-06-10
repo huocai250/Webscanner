@@ -6,9 +6,13 @@ Author: 火柴 | GitHub: huocai250
 - 移除 requests 不支持的 gopher/dict 协议 payload（永远失败）
 - 改用有效的 HTTP/HTTPS payload
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 SSRF_PARAMS = [
     "url", "uri", "path", "src", "dest", "target", "link",
@@ -59,7 +63,7 @@ SSRF_SIGNATURES = [
 
 class SSRFScanner(BaseScanner):
     def run(self):
-        log("INFO", "SSRF 检测...")
+        log.info( "SSRF 检测...")
         found = False
         for param in SSRF_PARAMS:
             if found:
@@ -67,14 +71,14 @@ class SSRFScanner(BaseScanner):
             for payload in SSRF_PAYLOADS:
                 r = self.get(self.target, params={param: payload})
                 if r and self._has_ssrf(r.text):
-                    log("VULN", f"[SSRF] 参数: {param} → {payload[:50]}")
+                    log.warning("[VULN] " +  f"[SSRF] 参数: {param} → {payload[:50]}")
                     self.result.add("SSRF", "CRITICAL",
                                     f"参数 '{param}' 存在 SSRF 漏洞",
                                     f"Payload: {payload}", url=self.target)
                     found = True
                     break
         if not found:
-            log("OK", "SSRF 检测完成，未发现明显漏洞")
+            log.info( "SSRF 检测完成，未发现明显漏洞")
 
     def _has_ssrf(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in SSRF_SIGNATURES)

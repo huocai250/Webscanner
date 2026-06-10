@@ -7,13 +7,17 @@ Author: 火柴 | GitHub: huocai250
   改用 OpenSSL 命令行或握手失败判断
 - 证书日期格式处理更健壮
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import ssl
 import socket
 import warnings
 from datetime import datetime
 from urllib.parse import urlparse
 from core.scanner import BaseScanner
-from core.colors import log
 
 # 已知不安全的密码套件片段
 WEAK_CIPHERS = ["RC4", "DES", "3DES", "MD5", "EXPORT", "NULL", "ANON"]
@@ -22,10 +26,10 @@ WEAK_CIPHERS = ["RC4", "DES", "3DES", "MD5", "EXPORT", "NULL", "ANON"]
 class SSLChecker(BaseScanner):
     def run(self):
         if not self.target.startswith("https"):
-            log("VULN", "目标未使用 HTTPS，数据明文传输")
+            log.warning("[VULN] " +  "目标未使用 HTTPS，数据明文传输")
             self.result.add("SSL/TLS", "HIGH", "目标未使用 HTTPS，通信未加密", url=self.target)
             return
-        log("INFO", "SSL/TLS 检测...")
+        log.info( "SSL/TLS 检测...")
         hostname = urlparse(self.target).hostname
         port     = urlparse(self.target).port or 443
         self._check_cert(hostname, port)
@@ -48,8 +52,8 @@ class SSLChecker(BaseScanner):
             except ValueError:
                 expire = datetime.strptime(not_after, "%b  %d %H:%M:%S %Y %Z")
             days_left = (expire - datetime.utcnow()).days
-            log("OK", f"证书到期: {expire.strftime('%Y-%m-%d')} (剩余 {days_left} 天)")
-            log("OK", f"TLS 版本: {tls_ver}")
+            log.info( f"证书到期: {expire.strftime('%Y-%m-%d')} (剩余 {days_left} 天)")
+            log.info( f"TLS 版本: {tls_ver}")
 
             if days_left < 0:
                 self.result.add("SSL/TLS", "CRITICAL", "证书已过期！", url=self.target)
@@ -63,8 +67,8 @@ class SSLChecker(BaseScanner):
             # 主体 & 颁发者
             subject = dict(x[0] for x in cert.get("subject", []))
             issuer  = dict(x[0] for x in cert.get("issuer",  []))
-            log("OK", f"颁发给: {subject.get('commonName','N/A')}")
-            log("OK", f"颁发者: {issuer.get('organizationName','N/A')}")
+            log.info( f"颁发给: {subject.get('commonName','N/A')}")
+            log.info( f"颁发者: {issuer.get('organizationName','N/A')}")
 
             # SAN
             if not cert.get("subjectAltName"):
@@ -77,13 +81,13 @@ class SSLChecker(BaseScanner):
                                 "可能为自签证书（颁发者 == 主体）", url=self.target)
 
         except ssl.SSLCertVerificationError as e:
-            log("VULN", f"证书验证失败: {e}")
+            log.warning("[VULN] " +  f"证书验证失败: {e}")
             self.result.add("SSL/TLS", "HIGH", f"证书验证错误: {e}", url=self.target)
         except ssl.SSLError as e:
-            log("VULN", f"SSL 握手错误: {e}")
+            log.warning("[VULN] " +  f"SSL 握手错误: {e}")
             self.result.add("SSL/TLS", "HIGH", f"SSL 配置错误: {e}", url=self.target)
         except Exception as e:
-            log("WARN", f"SSL 检测异常: {type(e).__name__}: {e}")
+            log.warning( f"SSL 检测异常: {type(e).__name__}: {e}")
 
     def _check_old_protocols(self, hostname: str, port: int):
         """
@@ -110,7 +114,7 @@ class SSLChecker(BaseScanner):
                 pass  # 连接失败 = 不支持该版本
 
         if old_protos:
-            log("WARN", f"支持旧版 TLS: {', '.join(old_protos)}")
+            log.warning( f"支持旧版 TLS: {', '.join(old_protos)}")
             self.result.add("SSL/TLS", "MEDIUM",
                             f"服务器支持不安全协议: {', '.join(old_protos)}",
                             url=self.target)
@@ -126,8 +130,8 @@ class SSLChecker(BaseScanner):
                 s.connect((hostname, port))
                 cipher_name = s.cipher()[0] if s.cipher() else ""
                 if any(w in cipher_name.upper() for w in WEAK_CIPHERS):
-                    log("WARN", f"使用弱密码套件: {cipher_name}")
+                    log.warning( f"使用弱密码套件: {cipher_name}")
                     self.result.add("SSL/TLS", "MEDIUM",
                                     f"使用弱密码套件: {cipher_name}", url=self.target)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f"弱密码套件检测失败: {e}")

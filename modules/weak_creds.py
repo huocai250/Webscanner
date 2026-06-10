@@ -2,9 +2,13 @@
 默认凭据 & 弱口令检测模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 # 常见管理页面 + 默认凭据
 TARGETS = [
@@ -47,15 +51,15 @@ RATE_LIMIT_SIGS = [
 
 class WeakCredScanner(BaseScanner):
     def run(self):
-        log("INFO", "弱口令 & 默认凭据检测...")
+        log.info( "弱口令 & 默认凭据检测...")
         for path, user_field, pass_field, success_sigs in TARGETS:
-            url = self.url(path)
+            url = self.build_url(path)
             r = self.get(url)
             if not r or r.status_code not in [200, 302, 401]:
                 continue
-            log("INFO", f"  测试登录页: {path}")
+            log.info( f"  测试登录页: {path}")
             if self._is_rate_limited(r.text):
-                log("WARN", f"  {path} 存在速率限制保护")
+                log.warning( f"  {path} 存在速率限制保护")
                 self.result.add("弱口令", "INFO",
                                 f"登录页 {path} 有速率限制保护", url=url)
                 continue
@@ -68,10 +72,10 @@ class WeakCredScanner(BaseScanner):
             if not r:
                 continue
             if self._is_rate_limited(r.text):
-                log("WARN", f"  触发速率限制，停止爆破: {url}")
+                log.warning( f"  触发速率限制，停止爆破: {url}")
                 return
             if self._is_success(r, success_sigs):
-                log("VULN", f"[弱口令] 登录成功！{url} → {username}:{password}")
+                log.warning("[VULN] " +  f"[弱口令] 登录成功！{url} → {username}:{password}")
                 self.result.add("弱口令", "CRITICAL",
                                 f"使用弱凭据登录成功: {username}:{password}",
                                 f"URL: {url}", url=url)

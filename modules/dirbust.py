@@ -7,10 +7,14 @@ Author: 火柴 | GitHub: huocai250
 - future.result() 包裹 try-except，防止线程异常传播崩溃主程序
 - 软404采样改为3次取平均，更稳定
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.scanner import BaseScanner
-from core.colors import log, Colors
 
 BUILTIN_WORDLIST = [
     "admin", "administrator", "admin.php", "admin.html", "admin/login",
@@ -65,14 +69,10 @@ class DirBuster(BaseScanner):
         self,
         target: str,
         result,
-        timeout: int = 10,
-        threads: int = 10,
-        cookies: dict = None,
-        headers: dict = None,
-        proxy: str = None,
         wordlist_file: str = None,
+        **kwargs,
     ):
-        super().__init__(target, result, timeout, threads, cookies, headers, proxy)
+        super().__init__(target, result, **kwargs)
         self.wordlist       = self._load_wordlist(wordlist_file)
         self._soft404_len   = -1   # 修复：延迟到 run() 采样
 
@@ -81,7 +81,7 @@ class DirBuster(BaseScanner):
             with open(path, encoding="utf-8", errors="ignore") as f:
                 custom = [l.strip() for l in f
                           if l.strip() and not l.startswith("#")]
-            log("OK", f"自定义字典: {len(custom)} 条 + 内置 {len(BUILTIN_WORDLIST)} 条")
+            log.info( f"自定义字典: {len(custom)} 条 + 内置 {len(BUILTIN_WORDLIST)} 条")
             return list(dict.fromkeys(BUILTIN_WORDLIST + custom))
         return BUILTIN_WORDLIST
 
@@ -89,7 +89,7 @@ class DirBuster(BaseScanner):
         """修复：在 run() 里采样，避免构造期失败导致永久失效"""
         lengths = []
         for suffix in ["__ws_nx_1__", "__ws_nx_2__", "__ws_nx_3__"]:
-            r = self.get(self.url(suffix))
+            r = self.get(self.build_url(suffix))
             if r:
                 lengths.append(len(r.text))
         return int(sum(lengths) / len(lengths)) if lengths else 0
@@ -97,7 +97,7 @@ class DirBuster(BaseScanner):
     def run(self):
         # 修复：在 run() 里采样软404基准
         self._soft404_len = self._sample_soft404()
-        log("INFO", f"目录枚举 ({len(self.wordlist)} 条, {self.threads} 线程, "
+        log.info( f"目录枚举 ({len(self.wordlist)} 条, {self.threads} 线程, "
             f"软404基准={self._soft404_len}b)...")
 
         found = []
@@ -111,10 +111,10 @@ class DirBuster(BaseScanner):
                 except Exception:
                     pass
 
-        log("OK", f"目录枚举完成，发现 {len(found)} 个路径")
+        log.info( f"目录枚举完成，发现 {len(found)} 个路径")
 
     def _check(self, path: str):
-        url = self.url(path)
+        url = self.build_url(path)
         r   = self.get(url, allow_redirects=False)
         if not r or r.status_code not in [200, 301, 302, 401, 403]:
             return None
@@ -136,9 +136,11 @@ class DirBuster(BaseScanner):
         redir    = r.headers.get("Location", "")
         color    = Colors.RED if severity == "HIGH" else Colors.YELLOW
 
-        log("VULN" if severity == "HIGH" else "WARN",
-            f"[{r.status_code} {label}] {color}{url}{Colors.RESET}"
-            + (f" {redir}" if redir else ""))
+        msg = f"[{r.status_code} {label}] {color}{url}{Colors.RESET}" + (f" {redir}" if redir else "")
+        if severity == "HIGH":
+            log.warning(f"[VULN] {msg}")
+        else:
+            log.warning(msg)
 
         detail = f"[{r.status_code}] {label}: /{path}" + (f" {redir}" if redir else "")
         self.result.add("目录枚举", severity, detail, url=url)

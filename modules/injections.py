@@ -7,9 +7,13 @@ Author: 火柴 | GitHub: huocai250
 - Host Header 测试需要禁用重定向
 - CRLF 注入改进检测逻辑
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 LOG4SHELL_PAYLOADS = [
     "${jndi:ldap://127.0.0.1:1389/a}",
@@ -44,7 +48,7 @@ CRLF_PARAMS = ["redirect", "url", "next", "return", "q", "search", "returnUrl"]
 
 class InjectionScanner(BaseScanner):
     def run(self):
-        log("INFO", "注入检测（Log4Shell / Host Header / CRLF）...")
+        log.info( "注入检测（Log4Shell / Host Header / CRLF）...")
         self._check_log4shell()
         self._check_host_header()
         self._check_crlf()
@@ -57,18 +61,18 @@ class InjectionScanner(BaseScanner):
                     continue
                 # 服务器返回 500 或将 payload 原样反射（未过滤）
                 if r.status_code == 500:
-                    log("WARN", f"[Log4Shell] Header '{header}' 注入触发 500，疑似存在漏洞")
+                    log.warning( f"[Log4Shell] Header '{header}' 注入触发 500，疑似存在漏洞")
                     self.result.add("Log4Shell", "HIGH",
                                     f"Header '{header}' 注入 JNDI Payload 触发服务器错误",
                                     f"Payload: {payload}", url=self.target)
                     return
                 if "${jndi" in r.text:
-                    log("WARN", "[Log4Shell] JNDI Payload 未被过滤（反射在响应中）")
+                    log.warning( "[Log4Shell] JNDI Payload 未被过滤（反射在响应中）")
                     self.result.add("Log4Shell", "HIGH",
                                     "JNDI Payload 在响应中未被过滤，疑似 Log4Shell",
                                     url=self.target)
                     return
-        log("OK", "Log4Shell 检测完成")
+        log.info( "Log4Shell 检测完成")
 
     def _check_host_header(self):
         orig_host = self.target.split("//")[-1].split("/")[0]
@@ -81,7 +85,7 @@ class InjectionScanner(BaseScanner):
                 continue
             # payload 被反射到响应 body
             if payload.split(":")[0] in r.text:
-                log("VULN", f"[Host Header注入] Payload 被反射到响应: {payload}")
+                log.warning("[VULN] " +  f"[Host Header注入] Payload 被反射到响应: {payload}")
                 self.result.add("Host Header 注入", "MEDIUM",
                                 "Host Header 值被反射到响应中",
                                 f"Payload: {payload}", url=self.target)
@@ -89,12 +93,12 @@ class InjectionScanner(BaseScanner):
             # payload 被反射到 Location 头
             loc = r.headers.get("Location", "")
             if "evil.com" in loc:
-                log("VULN", f"[Host Header注入] 影响 Location 重定向: {loc}")
+                log.warning("[VULN] " +  f"[Host Header注入] 影响 Location 重定向: {loc}")
                 self.result.add("Host Header 注入", "HIGH",
                                 "Host Header 注入影响重定向目标",
                                 f"Location: {loc}", url=self.target)
                 return
-        log("OK", "Host Header 注入检测完成")
+        log.info( "Host Header 注入检测完成")
 
     def _check_crlf(self):
         for param in CRLF_PARAMS:
@@ -108,15 +112,15 @@ class InjectionScanner(BaseScanner):
                 set_cookie = r.headers.get("Set-Cookie", "")
                 location   = r.headers.get("Location",  "")
                 if "injected_by_scanner" in set_cookie:
-                    log("VULN", f"[CRLF注入] 参数 '{param}' 注入成功，Set-Cookie 被篡改")
+                    log.warning("[VULN] " +  f"[CRLF注入] 参数 '{param}' 注入成功，Set-Cookie 被篡改")
                     self.result.add("CRLF 注入", "HIGH",
                                     f"参数 '{param}' 存在 CRLF 注入，可注入任意响应头",
                                     f"Payload: {payload}", url=self.target)
                     return
                 if "\r\n" in location or "%0d%0a" in location.lower():
-                    log("VULN", f"[CRLF注入] Location 头含 CRLF 字符")
+                    log.warning("[VULN] " +  f"[CRLF注入] Location 头含 CRLF 字符")
                     self.result.add("CRLF 注入", "MEDIUM",
                                     f"Location 头含 CRLF 字符，存在 HTTP 响应拆分风险",
                                     url=self.target)
                     return
-        log("OK", "CRLF 注入检测完成")
+        log.info( "CRLF 注入检测完成")

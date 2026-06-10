@@ -6,9 +6,13 @@ Author: 火柴 | GitHub: huocai250
 - 使用 BaseScanner.request 替代 self.session.post（享受重试机制）
 - multipart/form-data 上传时不能手动设 Content-Type（要让 requests 自动加 boundary）
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 UPLOAD_ENDPOINTS = [
     "/upload", "/uploads", "/file/upload", "/api/upload",
@@ -33,17 +37,17 @@ BYPASS_FILES = [
 
 class FileUploadScanner(BaseScanner):
     def run(self):
-        log("INFO", "文件上传漏洞检测...")
+        log.info( "文件上传漏洞检测...")
         r = self.get(self.target)
         if not r:
             return
         # 从页面提取上传表单
         for action in self._find_upload_forms(r.text):
-            log("INFO", f"  发现上传表单: {action}")
+            log.info( f"  发现上传表单: {action}")
             self._test_upload(action)
         # 测试已知上传端点
         for endpoint in UPLOAD_ENDPOINTS:
-            url = self.url(endpoint)
+            url = self.build_url(endpoint)
             r2  = self.get(url)
             if r2 and r2.status_code in [200, 302, 405]:
                 self._test_upload(url)
@@ -56,7 +60,7 @@ class FileUploadScanner(BaseScanner):
             action = re.search(r'action=["\']([^"\']*)["\']', m.group(), re.I)
             url = action.group(1) if action else ""
             if url and not url.startswith("http"):
-                url = self.url(url)
+                url = self.build_url(url)
             actions.append(url or self.target)
         return actions
 
@@ -78,7 +82,7 @@ class FileUploadScanner(BaseScanner):
             )
             if path_match:
                 uploaded_path = path_match.group(1)
-                log("VULN", f"[文件上传] 上传成功 {fname} → {uploaded_path}")
+                log.warning("[VULN] " +  f"[文件上传] 上传成功 {fname} → {uploaded_path}")
                 self.result.add("文件上传", "CRITICAL",
                                 f"危险文件上传成功: {fname}",
                                 f"路径: {uploaded_path}", url=url)
@@ -88,7 +92,7 @@ class FileUploadScanner(BaseScanner):
             # 危险扩展名未被拦截
             if fname.endswith((".php", ".php5", ".phtml", ".jsp", ".asp",
                                ".aspx", ".PHP")):
-                log("WARN", f"[文件上传] {fname} 未被拦截 ({r.status_code})")
+                log.warning( f"[文件上传] {fname} 未被拦截 ({r.status_code})")
                 self.result.add("文件上传", "HIGH",
                                 f"危险文件 {fname} 上传未被服务端拦截",
                                 f"状态码: {r.status_code}", url=url)
@@ -96,9 +100,9 @@ class FileUploadScanner(BaseScanner):
     def _verify_execution(self, path: str):
         if not path.startswith("/"):
             path = "/" + path
-        r = self.get(self.url(path))
+        r = self.get(self.build_url(path))
         if r and "ws_upload_test" in r.text:
-            log("VULN", f"[文件上传] 上传文件可被执行 (Webshell): {path}")
+            log.warning("[VULN] " +  f"[文件上传] 上传文件可被执行 (Webshell): {path}")
             self.result.add("文件上传", "CRITICAL",
                             "上传文件可被执行（已确认 Webshell）",
-                            url=self.url(path))
+                            url=self.build_url(path))

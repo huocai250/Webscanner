@@ -2,8 +2,12 @@
 开放重定向检测模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 from core.scanner import BaseScanner
-from core.colors import log
 
 REDIRECT_PARAMS = [
     "redirect", "url", "next", "return", "returnUrl", "return_url",
@@ -26,7 +30,7 @@ REDIRECT_PAYLOADS = [
 
 class OpenRedirectScanner(BaseScanner):
     def run(self):
-        log("INFO", "开放重定向检测...")
+        log.info( "开放重定向检测...")
         for param in REDIRECT_PARAMS:
             for payload in REDIRECT_PAYLOADS:
                 r = self.get(self.target, params={param: payload},
@@ -36,7 +40,7 @@ class OpenRedirectScanner(BaseScanner):
                 if r.status_code in [301, 302, 303, 307, 308]:
                     loc = r.headers.get("Location", "")
                     if "evil.com" in loc or (loc.startswith("//") and "evil" in loc):
-                        log("VULN", f"[开放重定向] 参数: {param} → {loc}")
+                        log.warning("[VULN] " +  f"[开放重定向] 参数: {param} → {loc}")
                         self.result.add("开放重定向", "MEDIUM",
                                         f"参数 '{param}' 存在开放重定向",
                                         f"Location: {loc}", url=self.target)

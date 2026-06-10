@@ -7,13 +7,17 @@ Author: 火柴 | GitHub: huocai250
   改为：对比携带合法token vs 伪造token的响应差异
 - 增加更多弱密钥
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 import json
 import base64
 import hmac
 import hashlib
 from core.scanner import BaseScanner
-from core.colors import log
 
 WEAK_SECRETS = [
     "secret", "password", "123456", "test", "key", "jwt",
@@ -39,13 +43,13 @@ def _b64e(data: bytes) -> str:
 
 class JWTScanner(BaseScanner):
     def run(self):
-        log("INFO", "JWT 安全检测...")
+        log.info( "JWT 安全检测...")
         tokens = self._find_tokens()
         if not tokens:
-            log("SKIP", "未在响应中发现 JWT Token")
+            log.info("[SKIP] " +  "未在响应中发现 JWT Token")
             return
         for token in tokens[:3]:   # 最多分析3个token
-            log("INFO", f"发现 JWT: {token[:50]}...")
+            log.info( f"发现 JWT: {token[:50]}...")
             self._analyze(token)
 
     def _find_tokens(self):
@@ -70,11 +74,11 @@ class JWTScanner(BaseScanner):
             return
 
         alg = header.get("alg", "").upper()
-        log("INFO", f"  JWT alg={alg}")
+        log.info( f"  JWT alg={alg}")
 
         # 1. none 算法
         if alg == "NONE":
-            log("VULN", "[JWT] 使用 none 算法，签名未验证！")
+            log.warning("[VULN] " +  "[JWT] 使用 none 算法，签名未验证！")
             self.result.add("JWT", "CRITICAL",
                             "JWT 使用 none 算法，可伪造任意 Token",
                             f"Header: {header}", url=self.target)
@@ -95,14 +99,14 @@ class JWTScanner(BaseScanner):
 
         # 5. 无过期时间
         if payload and "exp" not in payload:
-            log("WARN", "[JWT] Token 无过期时间")
+            log.warning( "[JWT] Token 无过期时间")
             self.result.add("JWT", "MEDIUM",
                             "JWT Token 未设置过期时间，存在永久有效风险",
                             url=self.target)
 
         # 6. alg:RS256 降级为 HS256 攻击提示
         if alg == "RS256":
-            log("WARN", "[JWT] RS256 算法可能存在 alg 混淆攻击（RS256→HS256）")
+            log.warning( "[JWT] RS256 算法可能存在 alg 混淆攻击（RS256→HS256）")
             self.result.add("JWT", "LOW",
                             "JWT 使用 RS256，需测试 alg confusion（RSA→HMAC）",
                             url=self.target)
@@ -129,7 +133,7 @@ class JWTScanner(BaseScanner):
         if (abs(fake_len - orig_len) < 50 and
                 abs(fake_len - no_auth_len) > 100 and
                 fake_r.status_code == orig_r.status_code):
-            log("VULN", "[JWT] none 算法绕过成功！伪造 Token 被服务端接受")
+            log.warning("[VULN] " +  "[JWT] none 算法绕过成功！伪造 Token 被服务端接受")
             self.result.add("JWT", "CRITICAL",
                             "JWT none 算法绕过：服务端接受无签名 Token",
                             url=self.target)
@@ -145,7 +149,7 @@ class JWTScanner(BaseScanner):
         for secret in WEAK_SECRETS:
             expected = _b64e(hmac.new(secret.encode(), msg, hash_fn).digest())
             if expected == sig:
-                log("VULN", f"[JWT] 弱密钥: '{secret}'")
+                log.warning("[VULN] " +  f"[JWT] 弱密钥: '{secret}'")
                 self.result.add("JWT", "CRITICAL",
                                 f"JWT 签名密钥为弱密钥: '{secret}'",
                                 url=self.target)
@@ -156,7 +160,7 @@ class JWTScanner(BaseScanner):
                      "key", "credit_card", "ssn", "id_card", "private"]
         for k in payload:
             if any(s in k.lower() for s in sensitive):
-                log("WARN", f"[JWT] Payload 含敏感字段: {k}")
+                log.warning( f"[JWT] Payload 含敏感字段: {k}")
                 self.result.add("JWT", "MEDIUM",
                                 f"JWT Payload 含敏感字段: {k}",
                                 url=self.target)

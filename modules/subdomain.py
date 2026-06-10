@@ -2,11 +2,15 @@
 子域名枚举模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from core.scanner import BaseScanner
-from core.colors import log
 
 SUBDOMAINS = [
     "www", "mail", "ftp", "admin", "api", "dev", "test", "staging",
@@ -36,10 +40,10 @@ class SubdomainScanner(BaseScanner):
         # 提取主域
         parts = hostname.split(".")
         if len(parts) < 2:
-            log("SKIP", f"无法提取主域名: {hostname}")
+            log.info("[SKIP] " +  f"无法提取主域名: {hostname}")
             return
         base_domain = ".".join(parts[-2:])
-        log("INFO", f"子域名枚举 (基域: {base_domain}, {len(SUBDOMAINS)} 个字典)...")
+        log.info( f"子域名枚举 (基域: {base_domain}, {len(SUBDOMAINS)} 个字典)...")
 
         found = []
         with ThreadPoolExecutor(max_workers=self.threads * 2) as executor:
@@ -55,12 +59,12 @@ class SubdomainScanner(BaseScanner):
                 if result:
                     found.append(result)
 
-        log("OK", f"子域名枚举完成，发现 {len(found)} 个")
+        log.info( f"子域名枚举完成，发现 {len(found)} 个")
 
     def _resolve(self, fqdn):
         try:
             ip = socket.gethostbyname(fqdn)
-            log("OK", f"子域名: {fqdn} → {ip}")
+            log.info( f"子域名: {fqdn} → {ip}")
             self.result.add("子域名", "INFO",
                             f"发现子域名: {fqdn} ({ip})", url=f"http://{fqdn}")
             return fqdn

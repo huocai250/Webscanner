@@ -6,9 +6,13 @@ Author: 火柴 | GitHub: huocai250
 - 使用 BaseScanner.post 的 extra_headers 参数，而非手动合并
 - 改进 XML 端点探测：只测试返回200的端点
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 XXE_PAYLOADS = [
     '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root><data>&xxe;</data></root>',
@@ -31,7 +35,7 @@ XML_ENDPOINTS = [
 
 class XXEScanner(BaseScanner):
     def run(self):
-        log("INFO", "XXE 注入检测...")
+        log.info( "XXE 注入检测...")
         # 先探测哪些端点响应 XML 请求
         reachable = self._find_xml_endpoints()
         reachable.append(self.target)  # 主目标也测
@@ -43,18 +47,18 @@ class XXEScanner(BaseScanner):
                               data=payload.encode("utf-8"),
                               extra_headers=XML_CONTENT_TYPE)
                 if r and self._has_xxe(r.text):
-                    log("VULN", f"[XXE] 发现 XML 外部实体注入: {url}")
+                    log.warning("[VULN] " +  f"[XXE] 发现 XML 外部实体注入: {url}")
                     self.result.add("XXE", "CRITICAL",
                                     f"端点存在 XXE 注入漏洞",
                                     r.text[:200], url=url)
                     return  # 发现即停
 
-        log("OK", "XXE 检测完成，未发现明显漏洞")
+        log.info( "XXE 检测完成，未发现明显漏洞")
 
     def _find_xml_endpoints(self) -> list:
         found = []
         for path in XML_ENDPOINTS:
-            url = self.url(path)
+            url = self.build_url(path)
             r   = self.get(url)
             if r and r.status_code in [200, 201, 405, 415]:
                 found.append(url)

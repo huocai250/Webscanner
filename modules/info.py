@@ -2,11 +2,15 @@
 信息收集模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 import socket
 from urllib.parse import urlparse
 from core.scanner import BaseScanner
-from core.colors import log
 
 
 class InfoGatherer(BaseScanner):
@@ -34,7 +38,7 @@ class InfoGatherer(BaseScanner):
     }
 
     def run(self):
-        log("INFO", "开始信息收集...")
+        log.info( "开始信息收集...")
         self._server_info()
         self._tech_detect()
         self._robots_txt()
@@ -50,7 +54,7 @@ class InfoGatherer(BaseScanner):
                         "X-Generator", "Via", "X-Runtime"]
         for h in info_headers:
             if h in r.headers:
-                log("OK", f"Header [{h}]: {r.headers[h]}")
+                log.info( f"Header [{h}]: {r.headers[h]}")
                 self.result.add("信息收集", "INFO",
                                 f"响应头暴露: {h} = {r.headers[h]}", url=self.target)
 
@@ -64,42 +68,42 @@ class InfoGatherer(BaseScanner):
             if any(s.lower() in content for s in sigs):
                 detected.append(tech)
         if detected:
-            log("OK", f"技术栈识别: {', '.join(detected)}")
+            log.info( f"技术栈识别: {', '.join(detected)}")
             self.result.add("技术栈", "INFO", f"检测到: {', '.join(detected)}", url=self.target)
 
     def _robots_txt(self):
-        url = self.url("/robots.txt")
+        url = self.build_url("/robots.txt")
         r = self.get(url)
         if r and r.status_code == 200:
-            log("OK", f"发现 robots.txt")
+            log.info( f"发现 robots.txt")
             self.result.add("信息收集", "INFO", "robots.txt 存在", r.text[:300], url)
             paths = re.findall(r"Disallow:\s*(/[^\s]*)", r.text)
             for p in paths:
-                log("INFO", f"  robots.txt Disallow: {p}")
+                log.info( f"  robots.txt Disallow: {p}")
 
     def _sitemap(self):
         for path in ["/sitemap.xml", "/sitemap_index.xml", "/sitemap.txt"]:
-            r = self.get(self.url(path))
+            r = self.get(self.build_url(path))
             if r and r.status_code == 200:
-                log("OK", f"发现 {path}")
-                self.result.add("信息收集", "INFO", f"Sitemap 存在: {path}", url=self.url(path))
+                log.info( f"发现 {path}")
+                self.result.add("信息收集", "INFO", f"Sitemap 存在: {path}", url=self.build_url(path))
 
     def _dns_info(self):
         hostname = urlparse(self.target).hostname
         try:
             ip = socket.gethostbyname(hostname)
-            log("OK", f"目标 IP: {ip}")
+            log.info( f"目标 IP: {ip}")
             self.result.add("信息收集", "INFO", f"域名解析 IP: {ip}")
             # 反向解析
             try:
                 rdns = socket.gethostbyaddr(ip)[0]
                 if rdns != hostname:
-                    log("INFO", f"反向 DNS: {rdns}")
+                    log.info( f"反向 DNS: {rdns}")
                     self.result.add("信息收集", "INFO", f"反向 DNS: {rdns}")
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as e:
+                log.debug(f"反向 DNS 查询失败: {e}")
+        except Exception as e:
+            log.debug(f"DNS 查询失败: {e}")
 
     def _check_waf(self):
         """简单 WAF 指纹识别"""
@@ -117,6 +121,6 @@ class InfoGatherer(BaseScanner):
         content = (r.text + str(dict(r.headers))).lower()
         for waf, sigs in waf_sigs.items():
             if any(s in content for s in sigs):
-                log("WARN", f"检测到 WAF: {waf}，可能影响漏洞测试准确性")
+                log.warning( f"检测到 WAF: {waf}，可能影响漏洞测试准确性")
                 self.result.add("WAF 检测", "INFO", f"发现 WAF: {waf}")
                 return

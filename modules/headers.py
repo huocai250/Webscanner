@@ -6,8 +6,12 @@ Author: 火柴 | GitHub: huocai250
 - Cookie HttpOnly 检测：用 _rest dict 替代不可靠的 has_nonstandard_attr
 - 更准确的 SameSite 属性检测
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 from core.scanner import BaseScanner
-from core.colors import log
 
 
 class HeaderChecker(BaseScanner):
@@ -27,10 +31,10 @@ class HeaderChecker(BaseScanner):
                     "X-Generator", "X-Runtime", "X-Debug-Token"]
 
     def run(self):
-        log("INFO", "检测 HTTP 安全头...")
+        log.info( "检测 HTTP 安全头...")
         r = self.get(self.target)
         if not r:
-            log("WARN", "无法获取响应，跳过安全头检测")
+            log.warning( "无法获取响应，跳过安全头检测")
             return
         self._check_missing(r)
         self._check_leak(r)
@@ -40,15 +44,15 @@ class HeaderChecker(BaseScanner):
     def _check_missing(self, r):
         for header, (severity, desc) in self.SECURITY_HEADERS.items():
             if header not in r.headers:
-                log("WARN", f"缺少: {header}")
+                log.warning( f"缺少: {header}")
                 self.result.add("安全头缺失", severity, desc, url=self.target)
             else:
-                log("OK", f"{header}: {r.headers[header][:80]}")
+                log.info( f"{header}: {r.headers[header][:80]}")
 
     def _check_leak(self, r):
         for h in self.LEAK_HEADERS:
             if h in r.headers:
-                log("WARN", f"信息泄露头: {h} = {r.headers[h]}")
+                log.warning( f"信息泄露头: {h} = {r.headers[h]}")
                 self.result.add("信息泄露", "LOW",
                                 f"响应头暴露版本信息: {h}={r.headers[h]}",
                                 url=self.target)
@@ -66,7 +70,7 @@ class HeaderChecker(BaseScanner):
         if "*" in csp and "src" in csp:
             issues.append("包含通配符 *（过于宽松）")
         if issues:
-            log("WARN", f"CSP 配置不当: {'; '.join(issues)}")
+            log.warning( f"CSP 配置不当: {'; '.join(issues)}")
             self.result.add("安全头配置", "LOW",
                             f"CSP 配置存在缺陷: {'; '.join(issues)}",
                             url=self.target)
@@ -101,7 +105,7 @@ class HeaderChecker(BaseScanner):
                 issues.append("SameSite=None 但缺少 Secure 标志")
 
             if issues:
-                log("WARN", f"Cookie [{cookie.name}]: {', '.join(issues)}")
+                log.warning( f"Cookie [{cookie.name}]: {', '.join(issues)}")
                 self.result.add("Cookie 安全", "MEDIUM",
                                 f"Cookie '{cookie.name}' 安全配置不当: {', '.join(issues)}",
                                 url=self.target)

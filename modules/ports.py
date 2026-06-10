@@ -2,11 +2,15 @@
 端口扫描模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from core.scanner import BaseScanner
-from core.colors import log
 
 PORTS = {
     21:    ("FTP",           "HIGH",   "FTP 明文传输，存在凭据泄露风险"),
@@ -47,7 +51,7 @@ PORTS = {
 
 class PortScanner(BaseScanner):
     def run(self):
-        log("INFO", f"端口扫描 ({len(PORTS)} 个目标端口)...")
+        log.info( f"端口扫描 ({len(PORTS)} 个目标端口)...")
         hostname = urlparse(self.target).hostname
         open_ports = []
         with ThreadPoolExecutor(max_workers=min(self.threads * 3, 100)) as executor:
@@ -65,7 +69,10 @@ class PortScanner(BaseScanner):
         for port in sorted(open_ports):
             name, severity, desc = PORTS[port]
             icon = "VULN" if severity in ["CRITICAL", "HIGH"] else "OK"
-            log(icon, f"端口 {port}/{name} 开放 — {desc}")
+            if icon == "VULN":
+                log.warning(f"[VULN] 端口 {port}/{name} 开放 — {desc}")
+            else:
+                log.info(f"端口 {port}/{name} 开放 — {desc}")
             self.result.add("端口扫描", severity,
                             f"开放端口: {port}/{name} — {desc}")
 

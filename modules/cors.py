@@ -6,8 +6,12 @@ Author: 火柴 | GitHub: huocai250
 - 添加 allow_redirects=False，避免跟随跳转后丢失 CORS 响应头
 - 细化检测逻辑
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 from core.scanner import BaseScanner
-from core.colors import log
 
 TEST_ORIGINS = [
     "https://evil.com",
@@ -20,7 +24,7 @@ TEST_ORIGINS = [
 
 class CORSScanner(BaseScanner):
     def run(self):
-        log("INFO", "CORS 配置检测...")
+        log.info( "CORS 配置检测...")
         self._check_cors()
 
     def _check_cors(self):
@@ -42,12 +46,12 @@ class CORSScanner(BaseScanner):
             if acao == "*":
                 if acac == "true":
                     # 通配符 + credentials 是无效配置，但仍需记录
-                    log("WARN", "CORS: Access-Control-Allow-Origin:* + Credentials:true（浏览器会拒绝，但配置混乱）")
+                    log.warning( "CORS: Access-Control-Allow-Origin:* + Credentials:true（浏览器会拒绝，但配置混乱）")
                     self.result.add("CORS", "MEDIUM",
                                     "CORS 同时使用通配符和 Credentials（配置矛盾）",
                                     url=self.target)
                 else:
-                    log("WARN", "CORS: Access-Control-Allow-Origin: * 通配符")
+                    log.warning( "CORS: Access-Control-Allow-Origin: * 通配符")
                     self.result.add("CORS", "LOW",
                                     "CORS 使用通配符，任意域可跨域读取（无凭据）",
                                     url=self.target)
@@ -55,7 +59,7 @@ class CORSScanner(BaseScanner):
 
             # 2. 反射 Origin + Credentials = true（高危）
             if acao == origin and acac == "true":
-                log("VULN", f"[CORS] 反射 Origin + Credentials=true → 可窃取认证信息！")
+                log.warning("[VULN] " +  f"[CORS] 反射 Origin + Credentials=true → 可窃取认证信息！")
                 self.result.add("CORS", "HIGH",
                                 "CORS 高危配置：反射任意 Origin 且允许携带凭据",
                                 f"Origin: {origin} | ACAO: {acao} | ACAC: {acac}",
@@ -64,14 +68,14 @@ class CORSScanner(BaseScanner):
 
             # 3. 反射 Origin（无 credentials）
             if acao == origin:
-                log("WARN", f"CORS 反射了请求 Origin: {origin}")
+                log.warning( f"CORS 反射了请求 Origin: {origin}")
                 self.result.add("CORS", "MEDIUM",
                                 "CORS 反射任意 Origin（无凭据），可能泄露响应内容",
                                 f"Origin: {origin}", url=self.target)
 
             # 4. null Origin
             if acao == "null":
-                log("WARN", "CORS 允许 null Origin（可被沙箱 iframe 利用）")
+                log.warning( "CORS 允许 null Origin（可被沙箱 iframe 利用）")
                 self.result.add("CORS", "MEDIUM",
                                 "CORS 允许 null Origin，可被沙箱 iframe 利用",
                                 url=self.target)

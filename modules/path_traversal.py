@@ -2,9 +2,13 @@
 路径穿越（Path Traversal）检测模块
 Author: 火柴 | GitHub: huocai250
 """
+import logging
+from core.logger import C as Colors
+log = logging.getLogger("webscan")
+
+
 import re
 from core.scanner import BaseScanner
-from core.colors import log
 
 TRAVERSAL_PARAMS = [
     "file", "path", "page", "doc", "document", "include",
@@ -49,7 +53,7 @@ TRAVERSAL_SIGS = [
 
 class PathTraversalScanner(BaseScanner):
     def run(self):
-        log("INFO", "路径穿越（Path Traversal）检测...")
+        log.info( "路径穿越（Path Traversal）检测...")
         found = False
         for param in TRAVERSAL_PARAMS:
             if found:
@@ -57,14 +61,14 @@ class PathTraversalScanner(BaseScanner):
             for payload in TRAVERSAL_PAYLOADS:
                 r = self.get(self.target, params={param: payload})
                 if r and self._has_traversal(r.text):
-                    log("VULN", f"[路径穿越] 参数: {param} | Payload: {payload[:40]}")
+                    log.warning("[VULN] " +  f"[路径穿越] 参数: {param} | Payload: {payload[:40]}")
                     self.result.add("路径穿越", "CRITICAL",
                                     f"参数 '{param}' 存在路径穿越漏洞",
                                     f"Payload: {payload}", url=self.target)
                     found = True
                     break
         if not found:
-            log("OK", "路径穿越检测完成，未发现明显漏洞")
+            log.info( "路径穿越检测完成，未发现明显漏洞")
 
     def _has_traversal(self, text):
         return any(re.search(p, text) for p in TRAVERSAL_SIGS)
