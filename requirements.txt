@@ -1,2 +1,12 @@
+# WebVulnScanner v7.0 依赖
+# Author: 火柴 | GitHub: huocai250
+
+# 核心依赖（必须）
 requests>=2.31.0
 urllib3>=2.0.0
+
+# Web UI（可选，启动 --webui 需要）
+flask>=3.0.0
+
+# 其他可选增强
+# colorama>=0.4.6    # Windows 终端颜色支持

@@ -43,6 +43,7 @@ def _b64e(data: bytes) -> str:
 
 class JWTScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "JWT 安全检测...")
         tokens = self._find_tokens()
         if not tokens:
@@ -51,6 +52,7 @@ class JWTScanner(BaseScanner):
         for token in tokens[:3]:   # 最多分析3个token
             log.info( f"发现 JWT: {token[:50]}...")
             self._analyze(token)
+        self._log_module_done("JWT安全", _before)
 
     def _find_tokens(self):
         r = self.get(self.target)

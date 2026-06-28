@@ -1,5 +1,5 @@
 """
-统一日志模块 — WebVulnScanner v6.0
+统一日志模块 — WebVulnScanner v7.0
 Author: 火柴 | GitHub: huocai250
 
 [优化] 使用 logging 模块替代 print，支持文件+终端双输出
@@ -126,7 +126,7 @@ def banner():
  ╚███╔███╔╝███████╗██████╔╝███████║╚██████╗██║  ██║██║ ╚████║
   ╚══╝╚══╝ ╚══════╝╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝
 {C.RESET}
-  {C.BOLD}Web Vulnerability Scanner  v6.0{C.RESET}
+  {C.BOLD}Web Vulnerability Scanner  v7.0{C.RESET}
   {C.DIM}Author : {C.CYAN}火柴{C.RESET}
   {C.DIM}GitHub : {C.CYAN}https://github.com/huocai250{C.RESET}
   {C.YELLOW}  ⚠  仅供授权渗透测试与安全研究使用{C.RESET}

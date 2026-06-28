@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebVulnScanner v7.0</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;
+  --border:#30363d;--text:#c9d1d9;--dim:#8b949e;
+  --blue:#58a6ff;--green:#3fb950;--yellow:#d29922;
+  --red:#f85149;--orange:#d97706;--purple:#a371f7;
+}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;font-size:14px}
+a{color:var(--blue);text-decoration:none}
+
+/* 头部 */
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 32px;
+       display:flex;align-items:center;justify-content:space-between}
+header h1{color:var(--blue);font-size:1.3em;font-weight:700}
+header span{color:var(--dim);font-size:.85em}
+
+/* 主布局 */
+.container{display:grid;grid-template-columns:380px 1fr;gap:20px;padding:20px 32px;height:calc(100vh - 61px)}
+
+/* 左侧表单 */
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px}
+.panel h2{font-size:.95em;color:var(--dim);margin-bottom:16px;text-transform:uppercase;letter-spacing:.05em}
+label{display:block;font-size:.85em;color:var(--dim);margin-bottom:4px;margin-top:12px}
+label:first-of-type{margin-top:0}
+textarea,input,select{width:100%;background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:8px 10px;font-size:.85em;outline:none}
+textarea{resize:vertical;min-height:80px;font-family:monospace}
+textarea:focus,input:focus,select:focus{border-color:var(--blue)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.toggle-row input[type=checkbox]{width:auto}
+.toggle-row label{margin:0;color:var(--text)}
+.btn{width:100%;padding:10px;border:none;border-radius:6px;font-size:.9em;
+     font-weight:600;cursor:pointer;margin-top:16px;transition:.2s}
+.btn-primary{background:var(--blue);color:#000}
+.btn-primary:hover{background:#79c0ff}
+.btn-primary:disabled{background:var(--bg3);color:var(--dim);cursor:not-allowed}
+.badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:.75em;font-weight:700;color:#000}
+.badge-CRITICAL{background:#ff2222}.badge-HIGH{background:#ff7700}
+.badge-MEDIUM{background:#ffcc00}.badge-LOW{background:#44aaff}.badge-INFO{background:#8b949e;color:#fff}
+
+/* 右侧 */
+.right{display:flex;flex-direction:column;gap:16px;overflow:hidden}
+
+/* 状态栏 */
+.status-bar{background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+            padding:12px 20px;display:flex;align-items:center;gap:16px}
+.status-dot{width:10px;height:10px;border-radius:50%;background:var(--dim)}
+.status-dot.running{background:var(--green);animation:pulse 1s infinite}
+.status-dot.done{background:var(--blue)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.status-text{font-size:.9em}
+.progress-bar-wrap{flex:1;background:var(--bg3);border-radius:4px;height:6px;overflow:hidden}
+.progress-bar{height:100%;background:var(--blue);transition:width .3s;width:0%}
+
+/* 日志 */
+.log-panel{background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+           flex:1;overflow:hidden;display:flex;flex-direction:column}
+.log-panel h2{padding:12px 16px;font-size:.85em;color:var(--dim);border-bottom:1px solid var(--border);
+              text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.log-body{flex:1;overflow-y:auto;padding:10px 14px;font-family:monospace;font-size:.8em}
+.log-line{padding:2px 0;border-bottom:1px solid transparent}
+.log-line.vuln{color:var(--red)}
+.log-line.warn{color:var(--yellow)}
+.log-line.done{color:var(--green)}
+.log-line.info{color:var(--dim)}
+.log-ts{color:var(--dim);margin-right:8px}
+
+/* 结果表 */
+.result-panel{background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.result-panel h2{padding:12px 16px;font-size:.85em;color:var(--dim);border-bottom:1px solid var(--border);
+                 text-transform:uppercase;display:flex;justify-content:space-between}
+.result-table{width:100%;border-collapse:collapse;font-size:.82em}
+.result-table th{background:var(--bg3);padding:8px 12px;text-align:left;color:var(--dim);
+                  border-bottom:1px solid var(--border);white-space:nowrap}
+.result-table td{padding:7px 12px;border-bottom:1px solid var(--bg3);vertical-align:top;word-break:break-all}
+.result-table tr:hover td{background:var(--bg3)}
+.empty{text-align:center;color:var(--dim);padding:32px;font-size:.9em}
+
+/* 统计卡片 */
+.stat-row{display:flex;gap:10px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+           padding:12px 18px;text-align:center;min-width:80px}
+.stat-num{font-size:1.8em;font-weight:700}
+.stat-lbl{font-size:.72em;color:var(--dim);margin-top:2px}
+
+/* 标签页 */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:0}
+.tab{padding:8px 16px;cursor:pointer;font-size:.85em;color:var(--dim);border-bottom:2px solid transparent}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 WebVulnScanner <span style="color:var(--purple)">v7.0</span></h1>
+  <span>Author: <a href="https://github.com/huocai250" target="_blank">火柴 @huocai250</a>
+        &nbsp;|&nbsp; ⚠ 仅供授权渗透测试使用</span>
+</header>
+
+<div class="container">
+  <!-- 左侧配置 -->
+  <div style="overflow-y:auto">
+    <div class="panel">
+      <h2>扫描配置</h2>
+
+      <label>目标 URL（每行一个）</label>
+      <textarea id="targets" placeholder="https://example.com&#10;https://target2.com" rows="4"></textarea>
+
+      <div class="row">
+        <div>
+          <label>线程数</label>
+          <input type="number" id="threads" value="10" min="1" max="100">
+        </div>
+        <div>
+          <label>超时(秒)</label>
+          <input type="number" id="timeout" value="10" min="3" max="60">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>速率限制(秒)</label>
+          <input type="number" id="rate_limit" value="0" min="0" max="10" step="0.1">
+        </div>
+        <div>
+          <label>模式</label>
+          <select id="mode">
+            <option value="">完整扫描</option>
+            <option value="fast">快速模式</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <input type="checkbox" id="exploit">
+        <label for="exploit">⚡ 开启漏洞自动利用</label>
+      </div>
+
+      <div id="exploit-opts" style="display:none;margin-top:10px">
+        <label>利用类型（留空=全部）</label>
+        <input type="text" id="exploit_types" placeholder="sqli,cmdi,xss,lfi">
+        <label>反弹Shell IP（可选）</label>
+        <input type="text" id="reverse_host" placeholder="192.168.1.100">
+      </div>
+
+      <label>跳过模块（多选）</label>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="ports"> 端口扫描</label>
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="dirbust"> 目录枚举</label>
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="sqli"> SQL注入</label>
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="xss"> XSS</label>
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="lfi"> LFI</label>
+          <label class="toggle-row" style="margin-top:0"><input type="checkbox" class="skip" value="subdomain"> 子域名</label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="start-btn" onclick="startScan()">▶ 开始扫描</button>
+      <button class="btn" style="background:var(--bg3);color:var(--dim);margin-top:8px"
+              onclick="stopScan()">■ 停止</button>
+    </div>
+
+    <!-- 统计 -->
+    <div style="margin-top:16px" id="stats-wrap" style="display:none">
+      <div class="stat-row" id="stat-row">
+        <div class="stat-card"><div class="stat-num" style="color:#ff2222" id="s-critical">0</div><div class="stat-lbl">CRITICAL</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#ff7700" id="s-high">0</div><div class="stat-lbl">HIGH</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#ffcc00" id="s-medium">0</div><div class="stat-lbl">MEDIUM</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#44aaff" id="s-low">0</div><div class="stat-lbl">LOW</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧实时输出 -->
+  <div class="right">
+    <!-- 状态栏 -->
+    <div class="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span class="status-text" id="status-text">就绪，请配置目标后开始扫描</span>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <span id="progress-text" style="font-size:.8em;color:var(--dim);white-space:nowrap"></span>
+    </div>
+
+    <!-- 标签页 -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;flex:1;display:flex;flex-direction:column">
+      <div class="tabs" style="padding:0 16px;background:var(--bg2)">
+        <div class="tab active" onclick="switchTab('log')">📋 实时日志</div>
+        <div class="tab" onclick="switchTab('vuln')">🚨 漏洞列表</div>
+      </div>
+
+      <!-- 日志 -->
+      <div id="tab-log" style="flex:1;overflow-y:auto;padding:10px 14px;font-family:monospace;font-size:.8em" id="log-body">
+        <div class="log-line info"><span class="log-ts">--:--:--</span>等待扫描开始...</div>
+      </div>
+
+      <!-- 漏洞表 -->
+      <div id="tab-vuln" style="display:none;flex:1;overflow-y:auto">
+        <table class="result-table" id="vuln-table">
+          <thead><tr><th>级别</th><th>类别</th><th>描述</th><th>URL</th></tr></thead>
+          <tbody id="vuln-tbody"><tr><td colspan="4" class="empty">暂无发现</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let evtSource = null;
+let scanId    = null;
+let vulnCount = {CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0};
+
+document.getElementById("exploit").addEventListener("change", function() {
+  document.getElementById("exploit-opts").style.display = this.checked ? "block" : "none";
+});
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  event.target.classList.add("active");
+  document.getElementById("tab-log").style.display  = name === "log"  ? "flex" : "none";
+  document.getElementById("tab-vuln").style.display = name === "vuln" ? "block" : "none";
+}
+
+function startScan() {
+  const targets = document.getElementById("targets").value.trim();
+  if (!targets) { alert("请输入目标 URL"); return; }
+
+  const skipChecks = [...document.querySelectorAll(".skip:checked")].map(c => c.value);
+  const payload = {
+    targets:       targets,
+    threads:       document.getElementById("threads").value,
+    timeout:       document.getElementById("timeout").value,
+    rate_limit:    document.getElementById("rate_limit").value,
+    fast:          document.getElementById("mode").value === "fast",
+    exploit:       document.getElementById("exploit").checked,
+    exploit_types: document.getElementById("exploit_types").value,
+    reverse_host:  document.getElementById("reverse_host").value,
+    skip_modules:  skipChecks.join(","),
+  };
+
+  document.getElementById("start-btn").disabled = true;
+  document.getElementById("log-body") && clearLog();
+  vulnCount = {CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0};
+  updateStats();
+
+  fetch("/scan", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(payload)
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert(data.error); document.getElementById("start-btn").disabled=false; return; }
+    scanId = data.scan_id;
+    setStatus("running", data.message);
+    connectSSE(scanId);
+  })
+  .catch(e => { alert("请求失败: "+e); document.getElementById("start-btn").disabled=false; });
+}
+
+function connectSSE(sid) {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource("/scan/"+sid+"/stream");
+  evtSource.onmessage = function(e) {
+    const ev = JSON.parse(e.data);
+    handleEvent(ev);
+  };
+  evtSource.onerror = function() {
+    evtSource.close();
+    setStatus("done", "连接中断");
+    document.getElementById("start-btn").disabled = false;
+  };
+}
+
+function handleEvent(ev) {
+  const logBody = document.getElementById("tab-log");
+  const ts = ev.time || "--:--:--";
+
+  if (ev.type === "module_start") {
+    addLog(ts, `▶ ${ev.module}`, "info");
+    setStatus("running", `正在扫描 ${ev.target} — ${ev.module}`);
+  } else if (ev.type === "module_done") {
+    addLog(ts, `✓ ${ev.module} 完成`, "done");
+  } else if (ev.type === "module_error") {
+    addLog(ts, `✗ ${ev.module}: ${ev.error}`, "warn");
+  } else if (ev.type === "vuln_found") {
+    addLog(ts, `[${ev.severity}] ${ev.category}: ${ev.detail}`, "vuln");
+    addVuln(ev);
+    vulnCount[ev.severity] = (vulnCount[ev.severity]||0) + 1;
+    updateStats();
+  } else if (ev.type === "target_start") {
+    addLog(ts, `━━ 目标 [${ev.index}/${ev.total}]: ${ev.target}`, "info");
+    const pct = ((ev.index-1)/ev.total*100).toFixed(0);
+    document.getElementById("progress-bar").style.width = pct+"%";
+    document.getElementById("progress-text").textContent = `${ev.index-1}/${ev.total}`;
+  } else if (ev.type === "target_done") {
+    const s = ev.summary;
+    addLog(ts, `✔ ${ev.target} 完成 (${ev.elapsed}) — C:${s.CRITICAL} H:${s.HIGH} M:${s.MEDIUM}`, "done");
+  } else if (ev.type === "all_done" || ev.type === "done") {
+    addLog(ts, "🎉 全部扫描完成！", "done");
+    setStatus("done", `扫描完成 — ${ev.total_targets||""} 个目标`);
+    document.getElementById("progress-bar").style.width = "100%";
+    document.getElementById("start-btn").disabled = false;
+    if (evtSource) evtSource.close();
+    // 拉取完整结果
+    if (scanId) loadFullResults(scanId);
+  } else if (ev.type === "error") {
+    addLog(ts, `错误: ${ev.message}`, "warn");
+  }
+}
+
+function addLog(ts, msg, cls) {
+  const body = document.getElementById("tab-log");
+  const line = document.createElement("div");
+  line.className = "log-line " + (cls||"info");
+  line.innerHTML = `<span class="log-ts">[${ts}]</span> ${escHtml(msg)}`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+
+function addVuln(ev) {
+  const tbody = document.getElementById("vuln-tbody");
+  // 移除"暂无发现"行
+  const empty = tbody.querySelector(".empty");
+  if (empty) empty.parentElement.remove();
+  const tr = document.createElement("tr");
+  const col = {CRITICAL:"#ff2222",HIGH:"#ff7700",MEDIUM:"#ffcc00",LOW:"#44aaff",INFO:"#8b949e"}[ev.severity]||"#aaa";
+  tr.innerHTML = `<td><span class="badge badge-${ev.severity}">${ev.severity}</span></td>
+    <td>${escHtml(ev.category||"")}</td>
+    <td>${escHtml(ev.detail||"")}</td>
+    <td style="font-family:monospace;font-size:.78em">${escHtml(ev.url||"")}</td>`;
+  tbody.prepend(tr);
+}
+
+function loadFullResults(sid) {
+  fetch("/scan/"+sid+"/result")
+    .then(r => r.json())
+    .then(data => {
+      const tbody = document.getElementById("vuln-tbody");
+      tbody.innerHTML = "";
+      let total = 0;
+      (data.results||[]).forEach(r => {
+        (r.findings||[]).forEach(f => {
+          total++;
+          const col = {CRITICAL:"#ff2222",HIGH:"#ff7700",MEDIUM:"#ffcc00",LOW:"#44aaff",INFO:"#8b949e"}[f.severity]||"#aaa";
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td><span class="badge badge-${f.severity}">${f.severity}</span></td>
+            <td>${escHtml(f.category)}</td>
+            <td>${escHtml(f.detail)}</td>
+            <td style="font-family:monospace;font-size:.78em">${escHtml(f.url||"")}</td>`;
+          tbody.appendChild(tr);
+        });
+      });
+      if (!total) tbody.innerHTML = '<tr><td colspan="4" class="empty">未发现漏洞</td></tr>';
+    });
+}
+
+function updateStats() {
+  document.getElementById("s-critical").textContent = vulnCount.CRITICAL||0;
+  document.getElementById("s-high").textContent     = vulnCount.HIGH||0;
+  document.getElementById("s-medium").textContent   = vulnCount.MEDIUM||0;
+  document.getElementById("s-low").textContent      = vulnCount.LOW||0;
+  document.getElementById("stats-wrap").style.display = "block";
+}
+
+function setStatus(state, msg) {
+  const dot  = document.getElementById("status-dot");
+  const text = document.getElementById("status-text");
+  dot.className  = "status-dot " + state;
+  text.textContent = msg;
+}
+
+function clearLog() {
+  document.getElementById("tab-log").innerHTML = "";
+}
+
+function stopScan() {
+  if (evtSource) evtSource.close();
+  setStatus("", "已停止");
+  document.getElementById("start-btn").disabled = false;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+</script>
+</body>
+</html>

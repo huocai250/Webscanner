@@ -95,6 +95,7 @@ class DirBuster(BaseScanner):
         return int(sum(lengths) / len(lengths)) if lengths else 0
 
     def run(self):
+        _before = self.result.total()
         # 修复：在 run() 里采样软404基准
         self._soft404_len = self._sample_soft404()
         log.info( f"目录枚举 ({len(self.wordlist)} 条, {self.threads} 线程, "
@@ -112,6 +113,7 @@ class DirBuster(BaseScanner):
                     pass
 
         log.info( f"目录枚举完成，发现 {len(found)} 个路径")
+        self._log_module_done("目录枚举", _before)
 
     def _check(self, path: str):
         url = self.build_url(path)

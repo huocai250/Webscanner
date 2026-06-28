@@ -15,12 +15,14 @@ from core.scanner import BaseScanner
 
 class ClickjackingScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "Clickjacking & 安全配置检测...")
         self._check_clickjacking()
         self._check_directory_listing()
         self._check_debug_mode()
         self._check_error_disclosure()
         self._check_method_override()
+        self._log_module_done("Clickjacking", _before)
 
     def _check_clickjacking(self):
         r = self.get(self.target)

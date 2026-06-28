@@ -51,6 +51,7 @@ PORTS = {
 
 class PortScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( f"端口扫描 ({len(PORTS)} 个目标端口)...")
         hostname = urlparse(self.target).hostname
         open_ports = []
@@ -75,6 +76,7 @@ class PortScanner(BaseScanner):
                 log.info(f"端口 {port}/{name} 开放 — {desc}")
             self.result.add("端口扫描", severity,
                             f"开放端口: {port}/{name} — {desc}")
+        self._log_module_done("端口扫描", _before)
 
     def _scan(self, host, port):
         try:

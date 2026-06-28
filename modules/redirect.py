@@ -30,6 +30,7 @@ REDIRECT_PAYLOADS = [
 
 class OpenRedirectScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "开放重定向检测...")
         for param in REDIRECT_PARAMS:
             for payload in REDIRECT_PAYLOADS:
@@ -45,3 +46,4 @@ class OpenRedirectScanner(BaseScanner):
                                         f"参数 '{param}' 存在开放重定向",
                                         f"Location: {loc}", url=self.target)
                         return
+        self._log_module_done("开放重定向", _before)

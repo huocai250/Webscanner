@@ -1,4 +1,5 @@
 from modules.info           import InfoGatherer
+from modules.fingerprint    import FingerprintScanner
 from modules.headers        import HeaderChecker
 from modules.ssl_check      import SSLChecker
 from modules.sensitive      import SensitiveInfoScanner

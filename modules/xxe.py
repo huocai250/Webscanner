@@ -35,6 +35,7 @@ XML_ENDPOINTS = [
 
 class XXEScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "XXE 注入检测...")
         # 先探测哪些端点响应 XML 请求
         reachable = self._find_xml_endpoints()
@@ -54,6 +55,7 @@ class XXEScanner(BaseScanner):
                     return  # 发现即停
 
         log.info( "XXE 检测完成，未发现明显漏洞")
+        self._log_module_done("XXE", _before)
 
     def _find_xml_endpoints(self) -> list:
         found = []

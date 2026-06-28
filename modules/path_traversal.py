@@ -53,6 +53,7 @@ TRAVERSAL_SIGS = [
 
 class PathTraversalScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "路径穿越（Path Traversal）检测...")
         found = False
         for param in TRAVERSAL_PARAMS:
@@ -69,6 +70,7 @@ class PathTraversalScanner(BaseScanner):
                     break
         if not found:
             log.info( "路径穿越检测完成，未发现明显漏洞")
+        self._log_module_done("路径穿越", _before)
 
     def _has_traversal(self, text):
         return any(re.search(p, text) for p in TRAVERSAL_SIGS)

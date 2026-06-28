@@ -18,6 +18,7 @@ class CSRFScanner(BaseScanner):
         re.I)
 
     def run(self):
+        _before = self.result.total()
         log.info( "CSRF 检测...")
         r = self.get(self.target)
         if not r:
@@ -38,3 +39,4 @@ class CSRFScanner(BaseScanner):
                                 url=self.target)
             else:
                 log.info( f"表单 #{i+1} 存在 CSRF Token")
+        self._log_module_done("CSRF", _before)

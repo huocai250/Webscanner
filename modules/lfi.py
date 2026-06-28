@@ -52,6 +52,7 @@ CMD_SIGS = [
 
 class LFIScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info("LFI & 命令注入检测...")
         r = self.get(self.target)
         if not self._test_lfi_get():
@@ -60,6 +61,7 @@ class LFIScanner(BaseScanner):
         if not self._test_cmd_get():
             if r:
                 self._test_cmd_forms(r.text)
+        self._log_module_done("LFI&命令注入", _before)
 
     def _test_lfi_get(self) -> bool:
         for param in LFI_PARAMS:

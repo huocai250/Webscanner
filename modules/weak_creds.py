@@ -51,6 +51,7 @@ RATE_LIMIT_SIGS = [
 
 class WeakCredScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "弱口令 & 默认凭据检测...")
         for path, user_field, pass_field, success_sigs in TARGETS:
             url = self.build_url(path)
@@ -64,6 +65,7 @@ class WeakCredScanner(BaseScanner):
                                 f"登录页 {path} 有速率限制保护", url=url)
                 continue
             self._try_creds(url, user_field, pass_field, success_sigs)
+        self._log_module_done("弱口令", _before)
 
     def _try_creds(self, url, user_field, pass_field, success_sigs):
         for username, password in WEAK_CREDS:

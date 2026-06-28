@@ -37,6 +37,7 @@ BYPASS_FILES = [
 
 class FileUploadScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "文件上传漏洞检测...")
         r = self.get(self.target)
         if not r:
@@ -51,6 +52,7 @@ class FileUploadScanner(BaseScanner):
             r2  = self.get(url)
             if r2 and r2.status_code in [200, 302, 405]:
                 self._test_upload(url)
+        self._log_module_done("文件上传", _before)
 
     def _find_upload_forms(self, html: str) -> list:
         actions = []

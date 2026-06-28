@@ -63,6 +63,7 @@ SSRF_SIGNATURES = [
 
 class SSRFScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "SSRF 检测...")
         found = False
         for param in SSRF_PARAMS:
@@ -71,14 +72,30 @@ class SSRFScanner(BaseScanner):
             for payload in SSRF_PAYLOADS:
                 r = self.get(self.target, params={param: payload})
                 if r and self._has_ssrf(r.text):
-                    log.warning("[VULN] " +  f"[SSRF] 参数: {param} → {payload[:50]}")
+                    log.warning(f"[VULN][SSRF] 参数: {param} → {payload[:50]}")
+                    exploit_result = ""
+                    if self.exploit_mode:
+                        try:
+                            from modules.exploit.ssrf_exploit import SSRFExploiter
+                            info = SSRFExploiter(self).exploit(
+                                self.target, param, "GET", {param: "1"})
+                            parts = []
+                            for k, v in info.get("cloud_metadata", {}).items():
+                                parts.append(f"云元数据[{k}]: {str(v)[:100]}")
+                            for svc in info.get("internal_services", []):
+                                parts.append(f"内网服务: {svc}")
+                            exploit_result = "\n".join(parts)
+                        except Exception as e:
+                            exploit_result = f"利用失败: {e}"
                     self.result.add("SSRF", "CRITICAL",
                                     f"参数 '{param}' 存在 SSRF 漏洞",
-                                    f"Payload: {payload}", url=self.target)
+                                    f"Payload: {payload}", url=self.target,
+                                    exploit_result=exploit_result)
                     found = True
                     break
         if not found:
             log.info( "SSRF 检测完成，未发现明显漏洞")
+        self._log_module_done("SSRF", _before)
 
     def _has_ssrf(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in SSRF_SIGNATURES)

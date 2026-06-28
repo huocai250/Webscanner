@@ -1,5 +1,5 @@
 """
-报告生成模块 — WebVulnScanner v6.0
+报告生成模块 — WebVulnScanner v7.0
 Author: 火柴 | GitHub: huocai250
 
 [新增] CSV 格式输出
@@ -28,7 +28,7 @@ def print_terminal(result: ScanResult):
     counts = result.summary()
     total  = result.total()
     print(f"\n{C.BOLD}{'═'*70}{C.RESET}")
-    print(f"{C.BOLD}  WebVulnScanner v6.0 扫描报告  |  {result.target}{C.RESET}")
+    print(f"{C.BOLD}  WebVulnScanner v7.0 扫描报告  |  {result.target}{C.RESET}")
     print(f"{'═'*70}")
     print(f"  目    标 : {result.target}")
     print(f"  开始时间 : {result.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -66,7 +66,7 @@ def print_terminal(result: ScanResult):
 def save_json(result: ScanResult, path: str):
     data = {
         "meta": {
-            "tool":      "WebVulnScanner v6.0",
+            "tool":      "WebVulnScanner v7.0",
             "author":    "火柴",
             "github":    "https://github.com/huocai250",
             "target":    result.target,
@@ -169,7 +169,7 @@ def save_html(result: ScanResult, path: str):
 </head>
 <body>
 <header>
-  <h1>🔍 WebVulnScanner v6.0 — 扫描报告</h1>
+  <h1>🔍 WebVulnScanner v7.0 — 扫描报告</h1>
   <p>目标: <strong>{_esc(result.target)}</strong> &nbsp;|&nbsp;
      时间: {result.start_time.strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp;
      耗时: {result.elapsed()} &nbsp;|&nbsp;
@@ -191,7 +191,7 @@ def save_html(result: ScanResult, path: str):
   </table>
 </div>
 <footer>
-  WebVulnScanner v6.0 &nbsp;·&nbsp; 作者: 火柴 &nbsp;·&nbsp;
+  WebVulnScanner v7.0 &nbsp;·&nbsp; 作者: 火柴 &nbsp;·&nbsp;
   <a href="https://github.com/huocai250">GitHub: huocai250</a>
 </footer>
 <script>

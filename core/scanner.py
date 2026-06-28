@@ -71,13 +71,17 @@ def build_session(
 
 def validate_url(url: str) -> str:
     """
-    [新增] URL 校验与规范化
+    [优化] URL 校验与规范化
+    - 去首尾空格
     - 自动补全 http:// 前缀
-    - 移除末尾 /
+    - 移除末尾多余 /
     """
     if not url:
         raise ValueError("目标 URL 不能为空")
-    if not url.startswith(("http://", "https://")):
+    url = url.strip()
+    if not url:
+        raise ValueError("目标 URL 不能为空")
+    if not url.lower().startswith(("http://", "https://")):
         url = "http://" + url
     return url.rstrip("/")
 
@@ -196,6 +200,24 @@ class BaseScanner:
         """[新增] 模块进度回调"""
         if self.progress_cb:
             self.progress_cb(message)
+
+
+    def _log_module_done(self, module_name: str, before_count: int):
+        """
+        [新增] 模块结束时，根据本次新增发现数量给出提示
+        before_count: run() 开始前的 findings 数量
+        """
+        added = self.result.total() - before_count
+        if added > 0:
+            log.warning(f"[{module_name}] 发现 {added} 个问题")
+        else:
+            log.info(f"[{module_name}] 未发现问题")
+
+    def _req(self, method: str, url: str, params: dict = None) -> "Optional[requests.Response]":
+        """[优化] 通用请求方法，自动选择 GET/POST"""
+        if method == "POST":
+            return self.post(url, data=params)
+        return self.get(url, params=params)
 
     def run(self):
         raise NotImplementedError

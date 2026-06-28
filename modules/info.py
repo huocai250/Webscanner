@@ -38,6 +38,7 @@ class InfoGatherer(BaseScanner):
     }
 
     def run(self):
+        _before = self.result.total()
         log.info( "开始信息收集...")
         self._server_info()
         self._tech_detect()
@@ -45,6 +46,7 @@ class InfoGatherer(BaseScanner):
         self._sitemap()
         self._dns_info()
         self._check_waf()
+        self._log_module_done("信息收集", _before)
 
     def _server_info(self):
         r = self.get(self.target)

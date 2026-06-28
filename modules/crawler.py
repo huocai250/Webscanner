@@ -26,6 +26,7 @@ class Crawler(BaseScanner):
         self.found_forms = []  # 表单列表
 
     def run(self):
+        _before = self.result.total()
         log.info(f"爬虫启动（最大 {self.max_pages} 页）...")
         queue   = deque([self.target])
         visited = set()
@@ -47,9 +48,9 @@ class Crawler(BaseScanner):
                 if link not in visited:
                     queue.append(link)
 
-            # 收集带参数的 URL
+            # 收集带参数的 URL（去重）
             parsed = urlparse(url)
-            if parsed.query:
+            if parsed.query and url not in self.found_urls:
                 self.found_urls.append(url)
                 log.info(f"  发现参数URL: {url[:80]}")
                 self.result.add("爬虫发现", "INFO",
@@ -72,3 +73,4 @@ class Crawler(BaseScanner):
         log.info(f"爬虫完成: 访问 {len(visited)} 页, "
                  f"发现 {len(self.found_urls)} 个参数URL, "
                  f"{len(self.found_forms)} 个表单")
+        self._log_module_done("爬虫", _before)

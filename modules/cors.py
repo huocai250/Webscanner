@@ -24,8 +24,10 @@ TEST_ORIGINS = [
 
 class CORSScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "CORS 配置检测...")
         self._check_cors()
+        self._log_module_done("CORS", _before)
 
     def _check_cors(self):
         for origin in TEST_ORIGINS:

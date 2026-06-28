@@ -25,6 +25,7 @@ WEAK_CIPHERS = ["RC4", "DES", "3DES", "MD5", "EXPORT", "NULL", "ANON"]
 
 class SSLChecker(BaseScanner):
     def run(self):
+        _before = self.result.total()
         if not self.target.startswith("https"):
             log.warning("[VULN] " +  "目标未使用 HTTPS，数据明文传输")
             self.result.add("SSL/TLS", "HIGH", "目标未使用 HTTPS，通信未加密", url=self.target)
@@ -35,6 +36,7 @@ class SSLChecker(BaseScanner):
         self._check_cert(hostname, port)
         self._check_old_protocols(hostname, port)
         self._check_weak_ciphers(hostname, port)
+        self._log_module_done("SSL/TLS", _before)
 
     def _check_cert(self, hostname: str, port: int):
         try:

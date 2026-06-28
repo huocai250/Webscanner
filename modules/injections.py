@@ -48,10 +48,12 @@ CRLF_PARAMS = ["redirect", "url", "next", "return", "q", "search", "returnUrl"]
 
 class InjectionScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "注入检测（Log4Shell / Host Header / CRLF）...")
         self._check_log4shell()
         self._check_host_header()
         self._check_crlf()
+        self._log_module_done("Log4Shell/CRLF/Host Header", _before)
 
     def _check_log4shell(self):
         for payload in LOG4SHELL_PAYLOADS[:2]:

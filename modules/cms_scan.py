@@ -69,6 +69,7 @@ DRUPAL_CHECKS = [
 
 class CMSScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info("CMS 专项扫描（WordPress/Joomla/ThinkPHP/Shiro/Actuator）...")
         cms = self._detect_cms()
         log.info(f"  CMS/框架识别: {cms or '未识别'}")
@@ -92,6 +93,7 @@ class CMSScanner(BaseScanner):
             self._check_paths(WP_CHECKS,       "WordPress")
             self._check_paths(JOOMLA_CHECKS,   "Joomla")
             self._check_thinkphp()
+        self._log_module_done("CMS专项", _before)
 
     def _detect_cms(self) -> str:
         r = self.get(self.target)

@@ -31,6 +31,7 @@ class HeaderChecker(BaseScanner):
                     "X-Generator", "X-Runtime", "X-Debug-Token"]
 
     def run(self):
+        _before = self.result.total()
         log.info( "检测 HTTP 安全头...")
         r = self.get(self.target)
         if not r:
@@ -40,6 +41,7 @@ class HeaderChecker(BaseScanner):
         self._check_leak(r)
         self._check_csp_quality(r)
         self._check_cookies(r)
+        self._log_module_done("HTTP安全头", _before)
 
     def _check_missing(self, r):
         for header, (severity, desc) in self.SECURITY_HEADERS.items():

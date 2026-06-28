@@ -60,6 +60,7 @@ COMMON_PARAMS = ["id", "page", "q", "search", "keyword", "cat",
 
 class SQLiScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info("SQL 注入检测（报错/布尔/时延）...")
         r = self.get(self.target)
         self._baseline_time = self._sample_baseline()
@@ -67,6 +68,7 @@ class SQLiScanner(BaseScanner):
         if r:
             for i, form in enumerate(extract_forms(r.text)):
                 self._test_form(form, i)
+        self._log_module_done("SQL注入", _before)
 
     def _sample_baseline(self) -> float:
         times = []

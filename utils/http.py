@@ -94,7 +94,12 @@ def parse_headers(header_list: List[str]) -> Dict[str, str]:
 
 
 def normalize_url(url: str) -> str:
-    """[新增] URL 规范化：补全协议、去尾部斜杠"""
-    if not url.startswith(("http://", "https://")):
+    """[新增] URL 规范化：去空格、补全协议、去尾部多余斜杠"""
+    url = url.strip()                               # 去首尾空格
+    if not url:
+        return url
+    if not url.lower().startswith(("http://", "https://")):
         url = "http://" + url
-    return url.rstrip("/")
+    # 去尾部多余斜杠（保留单个斜杠路径）
+    parsed = url.rstrip("/")
+    return parsed

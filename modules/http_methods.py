@@ -19,11 +19,13 @@ _TEST_FILE = "webscanner_put_test_delete_me.txt"
 
 class HTTPMethodScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info( "危险 HTTP 方法检测...")
         self._check_options()
         self._check_trace()
         self._check_put()
         self._check_delete()
+        self._log_module_done("危险HTTP方法", _before)
 
     def _check_options(self):
         r = self.request("OPTIONS", self.target)

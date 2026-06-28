@@ -51,10 +51,12 @@ class APIScanner(BaseScanner):
         self._soft404_len = len(r.text) if r else 0
 
     def run(self):
+        _before = self.result.total()
         log.info( "API 安全检测（未授权访问 / GraphQL / IDOR）...")
         self._scan_endpoints()
         self._test_graphql()
         self._test_idor()
+        self._log_module_done("API安全", _before)
 
     def _scan_endpoints(self):
         for path in API_ENDPOINTS:

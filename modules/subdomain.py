@@ -36,6 +36,7 @@ SUBDOMAINS = [
 
 class SubdomainScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         hostname = urlparse(self.target).hostname or ""
         # 提取主域
         parts = hostname.split(".")
@@ -60,6 +61,7 @@ class SubdomainScanner(BaseScanner):
                     found.append(result)
 
         log.info( f"子域名枚举完成，发现 {len(found)} 个")
+        self._log_module_done("子域名枚举", _before)
 
     def _resolve(self, fqdn):
         try:

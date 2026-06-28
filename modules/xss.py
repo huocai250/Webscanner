@@ -45,6 +45,7 @@ COMMON_PARAMS = ["q", "search", "keyword", "name", "input", "value",
 
 class XSSScanner(BaseScanner):
     def run(self):
+        _before = self.result.total()
         log.info("XSS 检测（反射型 / SSTI / DOM 分析）...")
         r = self.get(self.target)
         if not r:
@@ -54,6 +55,7 @@ class XSSScanner(BaseScanner):
         self._check_dom(r.text)
         for i, form in enumerate(extract_forms(r.text)):
             self._test_form_xss(form, i)
+        self._log_module_done("XSS", _before)
 
     def _test_reflected(self, params):
         for param in params:
