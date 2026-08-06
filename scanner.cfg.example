@@ -1,0 +1,39 @@
+# WebVulnScanner 配置文件示例
+# 用法： python main.py https://example.com --config scanner.cfg
+# 命令行参数优先级高于本文件。
+
+[scanner]
+threads = 10
+timeout = 10
+retries = 2
+
+# 负责任扫描：限速，降低目标负载
+delay = 0.0
+jitter = 0.0
+rate = 0
+
+# 爬虫
+max_urls = 100
+max_depth = 2
+
+# 网络
+verify_ssl = false
+random_agent = false
+# proxy = http://127.0.0.1:8080
+# user_agent =
+
+# 带外探测 canary（替换为你自己的 collaborator 域名）
+canary = oob.canary.example
+
+# 被动模式（只做非侵入式检测）
+passive = false
+
+# 自定义字典
+# wordlist = my_dirs.txt
+# subdomain_wordlist = subs.txt
+
+# 插件目录
+# plugins_dir = plugins
+
+# 跳过的模块（逗号分隔），可用: subdomain, ports, dirbust, log4shell ...
+skip = subdomain

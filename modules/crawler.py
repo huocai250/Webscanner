@@ -1,76 +1,77 @@
 """
-[新增] 爬虫模块 — WebVulnScanner v6.0
+轻量爬虫模块（发现 URL 与注入点）
 Author: 火柴 | GitHub: huocai250
-
-自动爬取目标页面，发现更多参数和端点供其他模块扫描
+v4.0 新增：BFS 爬取同源页面，收集带参数的 URL 与表单，
+          供 SQLi/XSS/LFI/重定向等模块测试真实攻击面。
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-import re
-from urllib.parse import urlparse, urljoin, parse_qs, urlencode
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.scanner import BaseScanner
-from utils.http import extract_links, extract_forms, extract_all_urls
-
+from core.colors import log
+from utils.http import extract_links, extract_forms, url_params, strip_query
 
 
 class Crawler(BaseScanner):
-    def __init__(self, *args, max_pages: int = 50, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.max_pages  = max_pages
-        self.visited    = set()
-        self.found_urls = []   # 带参数的 URL
-        self.found_forms = []  # 表单列表
+    name = "crawler"
+    passive = True   # 只是抓取页面，非侵入式
 
     def run(self):
-        _before = self.result.total()
-        log.info(f"爬虫启动（最大 {self.max_pages} 页）...")
-        queue   = deque([self.target])
+        cfg = self.config
+        # 始终把种子 URL 自身登记为注入点（若带参数）
+        self._register_url(self.config.normalized_target())
+
+        if not cfg.crawl:
+            log("SKIP", "爬虫已禁用，仅测试种子 URL")
+            self._register_common_guess()
+            return
+
+        log("INFO", f"爬取站点 (最多 {cfg.max_urls} 个页面, 深度 {cfg.max_depth})...")
+        seed = self.config.normalized_target()
+        queue = deque([(seed, 0)])
         visited = set()
+        page_count = 0
 
-        while queue and len(visited) < self.max_pages:
-            url = queue.popleft()
-            if url in visited:
+        while queue and page_count < cfg.max_urls:
+            url, depth = queue.popleft()
+            norm = url.split("#")[0]
+            if norm in visited:
                 continue
-            visited.add(url)
+            visited.add(norm)
 
-            r = self.get(url)
+            r = self.get(norm)
             if not r or "text/html" not in r.headers.get("Content-Type", ""):
                 continue
+            page_count += 1
 
-            log.info(f"  爬取: {url}")
+            self._register_url(norm)
+            self._register_forms(r.text, norm)
 
-            # 提取所有链接
-            for link in extract_links(r.text, url):
-                if link not in visited:
-                    queue.append(link)
+            if depth < cfg.max_depth:
+                for link in extract_links(r.text, norm):
+                    if link not in visited:
+                        queue.append((link, depth + 1))
 
-            # 收集带参数的 URL（去重）
-            parsed = urlparse(url)
-            if parsed.query and url not in self.found_urls:
-                self.found_urls.append(url)
-                log.info(f"  发现参数URL: {url[:80]}")
-                self.result.add("爬虫发现", "INFO",
-                                f"发现带参数页面: {url}", url=url)
+        log("OK", f"爬取完成：{page_count} 个页面，"
+                  f"{len(self.ctx.injection_points)} 个注入点")
+        self.ctx.result.add("信息收集", "INFO",
+                            f"爬虫发现 {len(self.ctx.injection_points)} 个可测试注入点",
+                            confidence="信息")
+        self._register_common_guess()
 
-            # 收集表单
-            for form in extract_forms(r.text):
-                action = form["action"] or url
-                if not action.startswith("http"):
-                    action = urljoin(url, action)
-                form["source_url"] = url
-                form["action"]     = action
-                self.found_forms.append(form)
-                log.info(f"  发现表单: {action} [{form['method']}] "
-                         f"参数: {list(form['inputs'].keys())}")
-                self.result.add("爬虫发现", "INFO",
-                                f"发现表单: {action} 参数={list(form['inputs'].keys())}",
-                                url=action)
+    def _register_url(self, url: str):
+        params = url_params(url)
+        if params:
+            self.ctx.add_injection_point(strip_query(url), "GET", params, "url")
 
-        log.info(f"爬虫完成: 访问 {len(visited)} 页, "
-                 f"发现 {len(self.found_urls)} 个参数URL, "
-                 f"{len(self.found_forms)} 个表单")
-        self._log_module_done("爬虫", _before)
+    def _register_forms(self, html: str, base: str):
+        for form in extract_forms(html, base):
+            action = form["action"] or base
+            if form["inputs"]:
+                self.ctx.add_injection_point(action, form["method"],
+                                             form["inputs"], "form")
+
+    def _register_common_guess(self):
+        """当爬虫没发现任何带参 URL 时，退回到常见参数名猜测。"""
+        if any(ip["source"] != "guess" for ip in self.ctx.injection_points):
+            return
+        seed = strip_query(self.config.normalized_target())
+        self.ctx.add_injection_point(seed, "GET", {"id": "1"}, "guess")

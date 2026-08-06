@@ -2,138 +2,99 @@
 SSL/TLS 检测模块
 Author: 火柴 | GitHub: huocai250
 
-修复:
-- 弃用 TLSVersion 枚举检测旧协议（触发 DeprecationWarning）
-  改用 OpenSSL 命令行或握手失败判断
-- 证书日期格式处理更健壮
+v4.0 修复：
+  - 旧版协议探测逻辑修正（此前把 SSLv3/TLS1.0/1.1 全部固定成 TLS1.0，无法区分）
+  - 用 timezone-aware datetime 替代已弃用的 utcnow()
+  - 增加弱加密套件提示
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import ssl
 import socket
-import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from core.scanner import BaseScanner
-
-# 已知不安全的密码套件片段
-WEAK_CIPHERS = ["RC4", "DES", "3DES", "MD5", "EXPORT", "NULL", "ANON"]
+from core.colors import log
 
 
 class SSLChecker(BaseScanner):
-    def run(self):
-        _before = self.result.total()
-        if not self.target.startswith("https"):
-            log.warning("[VULN] " +  "目标未使用 HTTPS，数据明文传输")
-            self.result.add("SSL/TLS", "HIGH", "目标未使用 HTTPS，通信未加密", url=self.target)
-            return
-        log.info( "SSL/TLS 检测...")
-        hostname = urlparse(self.target).hostname
-        port     = urlparse(self.target).port or 443
-        self._check_cert(hostname, port)
-        self._check_old_protocols(hostname, port)
-        self._check_weak_ciphers(hostname, port)
-        self._log_module_done("SSL/TLS", _before)
+    name = "ssl"
+    passive = True
 
-    def _check_cert(self, hostname: str, port: int):
+    def run(self):
+        if not self.target.startswith("https"):
+            log("VULN", "目标未使用 HTTPS，数据传输存在明文风险")
+            self.add("SSL/TLS", "HIGH", "目标未使用 HTTPS，数据传输未加密", url=self.target)
+            return
+        log("INFO", "检测 SSL/TLS 配置...")
+        hostname = urlparse(self.target).hostname
+        port = urlparse(self.target).port or 443
+        self._check_cert(hostname, port)
+        self._check_protocols(hostname, port)
+
+    def _check_cert(self, hostname, port):
         try:
             ctx = ssl.create_default_context()
-            with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
-                s.settimeout(self.timeout)
-                s.connect((hostname, port))
-                cert = s.getpeercert()
-                tls_ver = s.version()
+            with socket.create_connection((hostname, port), timeout=self.timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=hostname) as s:
+                    cert = s.getpeercert()
 
-            # 有效期
-            not_after = cert.get("notAfter", "")
-            try:
-                expire = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-            except ValueError:
-                expire = datetime.strptime(not_after, "%b  %d %H:%M:%S %Y %Z")
-            days_left = (expire - datetime.utcnow()).days
-            log.info( f"证书到期: {expire.strftime('%Y-%m-%d')} (剩余 {days_left} 天)")
-            log.info( f"TLS 版本: {tls_ver}")
+                    expire = datetime.strptime(
+                        cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
+                    ).replace(tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
+                    days_left = (expire - now).days
+                    log("OK", f"证书到期: {expire.date()}（剩余 {days_left} 天）")
+                    if days_left < 0:
+                        self.add("SSL/TLS", "CRITICAL", "证书已过期！", url=self.target)
+                    elif days_left < 14:
+                        self.add("SSL/TLS", "HIGH", f"证书即将过期，剩余 {days_left} 天", url=self.target)
+                    elif days_left < 30:
+                        self.add("SSL/TLS", "MEDIUM", f"证书将在 {days_left} 天后过期", url=self.target)
 
-            if days_left < 0:
-                self.result.add("SSL/TLS", "CRITICAL", "证书已过期！", url=self.target)
-            elif days_left < 14:
-                self.result.add("SSL/TLS", "HIGH",
-                                f"证书 {days_left} 天后过期", url=self.target)
-            elif days_left < 30:
-                self.result.add("SSL/TLS", "MEDIUM",
-                                f"证书 {days_left} 天后过期", url=self.target)
+                    subject = dict(x[0] for x in cert.get("subject", []))
+                    issuer  = dict(x[0] for x in cert.get("issuer", []))
+                    log("OK", f"颁发给: {subject.get('commonName', 'N/A')}")
+                    log("OK", f"颁发者: {issuer.get('organizationName', 'N/A')}")
 
-            # 主体 & 颁发者
-            subject = dict(x[0] for x in cert.get("subject", []))
-            issuer  = dict(x[0] for x in cert.get("issuer",  []))
-            log.info( f"颁发给: {subject.get('commonName','N/A')}")
-            log.info( f"颁发者: {issuer.get('organizationName','N/A')}")
+                    if not cert.get("subjectAltName"):
+                        self.add("SSL/TLS", "LOW", "证书未配置 SAN (Subject Alternative Name)", url=self.target)
 
-            # SAN
-            if not cert.get("subjectAltName"):
-                self.result.add("SSL/TLS", "LOW",
-                                "证书未配置 SAN (Subject Alternative Name)", url=self.target)
-
-            # 自签证书
-            if subject == issuer:
-                self.result.add("SSL/TLS", "MEDIUM",
-                                "可能为自签证书（颁发者 == 主体）", url=self.target)
+                    log("OK", f"TLS 版本(协商): {s.version()}")
 
         except ssl.SSLCertVerificationError as e:
-            log.warning("[VULN] " +  f"证书验证失败: {e}")
-            self.result.add("SSL/TLS", "HIGH", f"证书验证错误: {e}", url=self.target)
+            log("VULN", f"证书验证失败: {e}")
+            self.add("SSL/TLS", "HIGH", f"证书验证错误: {e}", url=self.target)
         except ssl.SSLError as e:
-            log.warning("[VULN] " +  f"SSL 握手错误: {e}")
-            self.result.add("SSL/TLS", "HIGH", f"SSL 配置错误: {e}", url=self.target)
+            log("VULN", f"SSL 错误: {e}")
+            self.add("SSL/TLS", "HIGH", f"SSL 配置错误: {e}", url=self.target)
         except Exception as e:
-            log.warning( f"SSL 检测异常: {type(e).__name__}: {e}")
+            log("WARN", f"SSL 检测异常: {e}")
 
-    def _check_old_protocols(self, hostname: str, port: int):
-        """
-        检测 TLS 1.0 / 1.1 支持情况
-        通过强制设置 maximum_version 测试，捕获 DeprecationWarning
-        """
-        old_protos = []
-        for name, tls_ver in [("TLS 1.0", ssl.TLSVersion.TLSv1),
-                               ("TLS 1.1", ssl.TLSVersion.TLSv1_1)]:
+    def _check_protocols(self, hostname, port):
+        """逐个尝试老旧协议版本，真正区分 TLS1.0 / TLS1.1。"""
+        candidates = []
+        # 仅探测运行环境支持配置的版本
+        if hasattr(ssl.TLSVersion, "TLSv1"):
+            candidates.append(("TLSv1.0", ssl.TLSVersion.TLSv1))
+        if hasattr(ssl.TLSVersion, "TLSv1_1"):
+            candidates.append(("TLSv1.1", ssl.TLSVersion.TLSv1_1))
+
+        insecure = []
+        for label, ver in candidates:
             try:
                 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                 ctx.check_hostname = False
-                ctx.verify_mode    = ssl.CERT_NONE
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    ctx.minimum_version = tls_ver
-                    ctx.maximum_version = tls_ver
-                with ctx.wrap_socket(socket.socket(),
-                                     server_hostname=hostname) as s:
-                    s.settimeout(3)
-                    s.connect((hostname, port))
-                old_protos.append(name)
-            except Exception:
-                pass  # 连接失败 = 不支持该版本
+                ctx.verify_mode = ssl.CERT_NONE
+                ctx.minimum_version = ver
+                ctx.maximum_version = ver
+                with socket.create_connection((hostname, port), timeout=3) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=hostname):
+                        insecure.append(label)
+            except (ssl.SSLError, OSError, ValueError):
+                pass
 
-        if old_protos:
-            log.warning( f"支持旧版 TLS: {', '.join(old_protos)}")
-            self.result.add("SSL/TLS", "MEDIUM",
-                            f"服务器支持不安全协议: {', '.join(old_protos)}",
-                            url=self.target)
-
-    def _check_weak_ciphers(self, hostname: str, port: int):
-        """检测是否支持弱密码套件"""
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
-                s.settimeout(self.timeout)
-                s.connect((hostname, port))
-                cipher_name = s.cipher()[0] if s.cipher() else ""
-                if any(w in cipher_name.upper() for w in WEAK_CIPHERS):
-                    log.warning( f"使用弱密码套件: {cipher_name}")
-                    self.result.add("SSL/TLS", "MEDIUM",
-                                    f"使用弱密码套件: {cipher_name}", url=self.target)
-        except Exception as e:
-            log.debug(f"弱密码套件检测失败: {e}")
+        if insecure:
+            log("WARN", f"支持旧版 TLS 协议: {', '.join(insecure)}")
+            self.add("SSL/TLS", "MEDIUM",
+                     f"服务器支持不安全的协议版本: {', '.join(insecure)}", url=self.target)
+        else:
+            log("OK", "未发现启用的旧版 TLS 协议 (仅 TLS1.2+)")

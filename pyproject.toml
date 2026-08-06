@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webvulnscanner"
+version = "8.0.0"
+description = "全功能 Web 漏洞扫描工具（仅供授权渗透测试与安全研究使用）"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "火柴" }]
+license = { text = "MIT" }
+keywords = ["security", "scanner", "pentest", "web", "vulnerability"]
+dependencies = [
+    "requests>=2.31.0",
+    "urllib3>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+webui = ["flask>=3.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/huocai250"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

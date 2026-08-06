@@ -1,174 +1,94 @@
 """
-JWT 安全检测模块
+JWT 安全分析模块（被动 / 仅分析）
 Author: 火柴 | GitHub: huocai250
 
-修复:
-- _test_token 不再仅凭 status_code==200 判断绕过成功（误报率太高）
-  改为：对比携带合法token vs 伪造token的响应差异
-- 增加更多弱密钥
+从 Cookie / Authorization 头 / 页面正文中发现 JWT，并做**静态安全分析**：
+  - alg=none（可被伪造）
+  - 缺少 exp（永不过期）
+  - 敏感声明（password / role / is_admin 等出现在可解码 payload 中）
+  - 弱签名算法提示（HS256 对称密钥若泄露即可伪造 —— 仅提示，不做爆破）
+
+说明：本模块只做 base64 解码与结构分析，**不尝试破解密钥、不伪造 token**。
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import re
 import json
 import base64
-import hmac
-import hashlib
 from core.scanner import BaseScanner
+from core.colors import log
 
-WEAK_SECRETS = [
-    "secret", "password", "123456", "test", "key", "jwt",
-    "admin", "qwerty", "abc123", "changeme", "default",
-    "supersecret", "mysecret", "jwttoken", "token",
-    "", "null", "undefined", "jwt_secret", "jwt-secret",
-    "your-256-bit-secret", "your-secret-key", "secretkey",
-    "s3cr3t", "p@ssw0rd", "1234567890", "HS256",
-]
+JWT_RE = re.compile(r'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*')
+SENSITIVE_CLAIMS = ["password", "passwd", "pwd", "secret", "is_admin",
+                    "isadmin", "role", "roles", "admin", "priv", "authorities"]
 
 
-def _b64d(s: str) -> str:
-    s += "=" * (4 - len(s) % 4)
-    try:
-        return base64.urlsafe_b64decode(s).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
-
-def _b64e(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+def _b64d(seg: str) -> bytes:
+    seg += "=" * (-len(seg) % 4)
+    return base64.urlsafe_b64decode(seg.encode())
 
 
 class JWTScanner(BaseScanner):
-    def run(self):
-        _before = self.result.total()
-        log.info( "JWT 安全检测...")
-        tokens = self._find_tokens()
-        if not tokens:
-            log.info("[SKIP] " +  "未在响应中发现 JWT Token")
-            return
-        for token in tokens[:3]:   # 最多分析3个token
-            log.info( f"发现 JWT: {token[:50]}...")
-            self._analyze(token)
-        self._log_module_done("JWT安全", _before)
+    name = "jwt"
+    passive = True
 
-    def _find_tokens(self):
-        r = self.get(self.target)
-        if not r:
-            return []
-        pattern = r'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+'
-        tokens = re.findall(pattern, r.text)
-        for v in r.headers.values():
-            tokens += re.findall(pattern, v)
-        return list(dict.fromkeys(tokens))  # 去重保序
+    def run(self):
+        log("INFO", "JWT 安全分析（静态）...")
+        tokens = self._collect_tokens()
+        if not tokens:
+            log("INFO", "  未发现 JWT")
+            return
+        seen = set()
+        for tok in tokens:
+            if tok in seen:
+                continue
+            seen.add(tok)
+            self._analyze(tok)
+
+    def _collect_tokens(self):
+        toks = []
+        # 请求头/Cookie 里我们主动带的
+        for v in list(self.config.cookies.values()) + list(self.config.headers.values()):
+            toks += JWT_RE.findall(str(v))
+        # 目标响应（Set-Cookie / 正文）
+        r = self.baseline(self.target)
+        if r:
+            blob = " ".join(f"{k}: {v}" for k, v in r.headers.items())
+            toks += JWT_RE.findall(blob)
+            toks += JWT_RE.findall(r.text or "")
+        return toks
 
     def _analyze(self, token: str):
         parts = token.split(".")
-        if len(parts) != 3:
+        if len(parts) < 2:
             return
-
-        header_raw, payload_raw, sig = parts
-        header  = self._safe_json(_b64d(header_raw))
-        payload = self._safe_json(_b64d(payload_raw))
-        if not header:
-            return
-
-        alg = header.get("alg", "").upper()
-        log.info( f"  JWT alg={alg}")
-
-        # 1. none 算法
-        if alg == "NONE":
-            log.warning("[VULN] " +  "[JWT] 使用 none 算法，签名未验证！")
-            self.result.add("JWT", "CRITICAL",
-                            "JWT 使用 none 算法，可伪造任意 Token",
-                            f"Header: {header}", url=self.target)
-
-        # 2. 尝试 none 算法绕过：比较有/无签名的响应差异
-        if alg in ["HS256", "HS384", "HS512", "RS256", "NONE"]:
-            fake_hdr = _b64e(json.dumps({"alg": "none", "typ": "JWT"}).encode())
-            fake_tok = f"{fake_hdr}.{payload_raw}."
-            self._test_none_bypass(token, fake_tok)
-
-        # 3. 弱密钥爆破（仅 HMAC 算法）
-        if alg in ["HS256", "HS384", "HS512"]:
-            self._brute_secret(header_raw, payload_raw, sig, alg)
-
-        # 4. Payload 敏感字段
-        if payload:
-            self._check_payload_leaks(payload)
-
-        # 5. 无过期时间
-        if payload and "exp" not in payload:
-            log.warning( "[JWT] Token 无过期时间")
-            self.result.add("JWT", "MEDIUM",
-                            "JWT Token 未设置过期时间，存在永久有效风险",
-                            url=self.target)
-
-        # 6. alg:RS256 降级为 HS256 攻击提示
-        if alg == "RS256":
-            log.warning( "[JWT] RS256 算法可能存在 alg 混淆攻击（RS256→HS256）")
-            self.result.add("JWT", "LOW",
-                            "JWT 使用 RS256，需测试 alg confusion（RSA→HMAC）",
-                            url=self.target)
-
-    def _test_none_bypass(self, orig_token: str, fake_token: str):
-        """
-        修复：比较正常请求与伪造 token 请求的响应
-        只有当伪造 token 响应与原始 token 相似（而非报错）才判定为绕过
-        """
-        orig_r = self.get(self.target,
-                          headers={"Authorization": f"Bearer {orig_token}"})
-        fake_r = self.get(self.target,
-                          headers={"Authorization": f"Bearer {fake_token}"})
-        no_auth_r = self.get(self.target)
-
-        if not (orig_r and fake_r and no_auth_r):
-            return
-
-        orig_len    = len(orig_r.text)
-        fake_len    = len(fake_r.text)
-        no_auth_len = len(no_auth_r.text)
-
-        # 伪造 token 响应与合法 token 相近，但与无 token 响应差异明显
-        if (abs(fake_len - orig_len) < 50 and
-                abs(fake_len - no_auth_len) > 100 and
-                fake_r.status_code == orig_r.status_code):
-            log.warning("[VULN] " +  "[JWT] none 算法绕过成功！伪造 Token 被服务端接受")
-            self.result.add("JWT", "CRITICAL",
-                            "JWT none 算法绕过：服务端接受无签名 Token",
-                            url=self.target)
-
-    def _brute_secret(self, hdr_raw: str, pay_raw: str, sig: str, alg: str):
-        fn_map = {
-            "HS256": hashlib.sha256,
-            "HS384": hashlib.sha384,
-            "HS512": hashlib.sha512,
-        }
-        hash_fn = fn_map.get(alg, hashlib.sha256)
-        msg = f"{hdr_raw}.{pay_raw}".encode()
-        for secret in WEAK_SECRETS:
-            expected = _b64e(hmac.new(secret.encode(), msg, hash_fn).digest())
-            if expected == sig:
-                log.warning("[VULN] " +  f"[JWT] 弱密钥: '{secret}'")
-                self.result.add("JWT", "CRITICAL",
-                                f"JWT 签名密钥为弱密钥: '{secret}'",
-                                url=self.target)
-                return
-
-    def _check_payload_leaks(self, payload: dict):
-        sensitive = ["password", "passwd", "secret", "token",
-                     "key", "credit_card", "ssn", "id_card", "private"]
-        for k in payload:
-            if any(s in k.lower() for s in sensitive):
-                log.warning( f"[JWT] Payload 含敏感字段: {k}")
-                self.result.add("JWT", "MEDIUM",
-                                f"JWT Payload 含敏感字段: {k}",
-                                url=self.target)
-
-    def _safe_json(self, s: str):
         try:
-            return json.loads(s)
+            header = json.loads(_b64d(parts[0]) or b"{}")
+            payload = json.loads(_b64d(parts[1]) or b"{}")
         except Exception:
-            return None
+            return
+
+        short = token[:16] + "…"
+        alg = str(header.get("alg", "")).lower()
+        log("VULN", f"发现 JWT: {short} (alg={header.get('alg')})")
+
+        if alg == "none":
+            self.add("JWT 安全", "HIGH",
+                     "JWT 使用 alg=none，签名可被绕过/伪造",
+                     evidence=f"header={header}", url=self.target)
+        elif alg.startswith("hs"):
+            self.add("JWT 安全", "LOW",
+                     f"JWT 使用对称算法 {header.get('alg')}；若签名密钥泄露即可伪造 token",
+                     evidence=f"alg={header.get('alg')}", url=self.target,
+                     confidence="信息")
+
+        if "exp" not in payload:
+            self.add("JWT 安全", "MEDIUM",
+                     "JWT 缺少 exp（过期时间），token 永久有效",
+                     evidence=f"claims={list(payload.keys())}", url=self.target)
+
+        hit = [c for c in SENSITIVE_CLAIMS if c in
+               [str(k).lower() for k in payload.keys()]]
+        if hit:
+            self.add("JWT 安全", "LOW",
+                     f"JWT payload 含敏感/权限声明: {', '.join(hit)}（payload 非加密，任何人可解码）",
+                     evidence=f"claims={list(payload.keys())}", url=self.target,
+                     confidence="信息")

@@ -1,223 +1,208 @@
 """
-基础扫描器类 — WebVulnScanner v6.0
+基础扫描器类（所有模块继承此类）
 Author: 火柴 | GitHub: huocai250
 
-[优化] 集成速率限制、重试机制、统一异常处理
-       [新增] progress 进度回调
-       [新增] validate_url 工具方法
-       [优化] 命名更规范
+v4.0 改进：
+  - 统一 ScanContext 共享会话 / 限速器 / 基线缓存 / 已发现注入点
+  - 每个请求自动：作用域校验、限速、礼貌延迟、失败重试
+  - 提供 map() 并发助手，供各模块并行测试 payload
+  - 基线响应缓存，避免重复抓取首页
 """
-import time
-import logging
-from typing import Optional, Dict, Callable
-from urllib.parse import urlparse, urljoin
-
+import random
+import threading
 import requests
 import urllib3
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Iterable, List, Optional
 
-from core.result      import ScanResult
-from core.rate_limiter import RateLimiter
+from core.config import ScanConfig, USER_AGENTS
+from core.result import ScanResult
+from core.colors import log
+from utils.ratelimit import RateLimiter, polite_delay
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
 
-log = logging.getLogger("webscan")
-
-
-def build_session(
-    proxy:       str = None,
-    max_retries: int = 2,
-    user_agent:  str = None,
-) -> requests.Session:
-    """
-    [优化] 统一 Session 工厂：连接池 + 重试策略
-    """
+def build_session(cfg: ScanConfig) -> requests.Session:
     session = requests.Session()
-    session.verify = False
-
-    # [新增] 重试策略：状态码5xx 自动重试，指数退避
-    retry_strategy = Retry(
-        total              = max_retries,
-        backoff_factor     = 0.5,
-        status_forcelist   = [500, 502, 503, 504],
-        allowed_methods    = ["GET", "POST", "HEAD", "OPTIONS", "PUT", "DELETE"],
-        raise_on_status    = False,
+    session.verify = cfg.verify_ssl
+    session.headers.update({"User-Agent": cfg.user_agent})
+    if cfg.cookies:
+        session.cookies.update(cfg.cookies)
+    if cfg.headers:
+        session.headers.update(cfg.headers)
+    if cfg.proxy:
+        session.proxies = {"http": cfg.proxy, "https": cfg.proxy}
+    # 连接池调优
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=cfg.threads * 2,
+        pool_maxsize=cfg.threads * 2,
+        max_retries=0,               # 重试逻辑自己处理
     )
-    adapter = HTTPAdapter(
-        max_retries    = retry_strategy,
-        pool_connections = 20,
-        pool_maxsize     = 20,
-    )
-    session.mount("http://",  adapter)
+    session.mount("http://", adapter)
     session.mount("https://", adapter)
-
-    session.headers.update({
-        "User-Agent": user_agent or DEFAULT_USER_AGENT,
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    })
-
-    if proxy:
-        session.proxies = {"http": proxy, "https": proxy}
-
     return session
 
 
-def validate_url(url: str) -> str:
-    """
-    [优化] URL 校验与规范化
-    - 去首尾空格
-    - 自动补全 http:// 前缀
-    - 移除末尾多余 /
-    """
-    if not url:
-        raise ValueError("目标 URL 不能为空")
-    url = url.strip()
-    if not url:
-        raise ValueError("目标 URL 不能为空")
-    if not url.lower().startswith(("http://", "https://")):
-        url = "http://" + url
-    return url.rstrip("/")
+class ScanContext:
+    """在所有模块间共享的运行时上下文。"""
+
+    def __init__(self, config: ScanConfig, result: ScanResult):
+        self.config = config
+        self.result = result
+        self.session = build_session(config)
+        self.limiter = RateLimiter(config.rate)
+        self._baseline: dict = {}
+        self._baseline_lock = threading.Lock()
+        self._scope_warned = set()
+
+        # 爬虫填充、其它模块消费的注入点列表
+        # 每项：{"url","method","params"(dict),"source"}
+        self.injection_points: List[dict] = []
+        self._ip_lock = threading.Lock()
+        self._ip_seen = set()
+
+        # 指纹识别结果（Fingerprinter 写入，CMSScanner 等消费）
+        # 每项：{"name","category","version"}
+        self.fingerprints: List[dict] = []
+        self._fp_lock = threading.Lock()
+        self._fp_seen = set()
+
+    def add_fingerprint(self, name: str, category: str, version: str = ""):
+        key = (name, category)
+        with self._fp_lock:
+            if key in self._fp_seen:
+                return
+            self._fp_seen.add(key)
+            self.fingerprints.append(
+                {"name": name, "category": category, "version": version})
+
+    def tech_names(self) -> set:
+        with self._fp_lock:
+            return {f["name"].lower() for f in self.fingerprints}
+
+    def add_injection_point(self, url: str, method: str, params: dict, source: str):
+        key = (url, method.upper(), tuple(sorted(params.keys())))
+        with self._ip_lock:
+            if key in self._ip_seen:
+                return
+            self._ip_seen.add(key)
+            self.injection_points.append({
+                "url": url, "method": method.upper(),
+                "params": dict(params), "source": source,
+            })
 
 
 class BaseScanner:
-    """
-    [优化] 所有扫描模块的基类
-    封装: HTTP请求 / 速率限制 / 重试 / 日志 / URL工具
-    """
+    name = "base"
+    # passive=True 的模块在被动模式下仍会运行（非侵入式）
+    passive = False
 
-    def __init__(
-        self,
-        target:       str,
-        result:       ScanResult,
-        timeout:      int      = 10,
-        threads:      int      = 10,
-        cookies:      Dict     = None,
-        headers:      Dict     = None,
-        proxy:        str      = None,
-        rate_limiter: RateLimiter = None,
-        max_retries:  int      = 2,
-        user_agent:   str      = None,
-        exploit_mode: bool     = False,
-        progress_cb:  Callable = None,  # [新增] 进度回调
-    ):
-        self.target       = validate_url(target)
-        self.result       = result
-        self.timeout      = timeout
-        self.threads      = threads
-        self.exploit_mode = exploit_mode
-        self.progress_cb  = progress_cb
-        self.rate_limiter = rate_limiter or RateLimiter(0)
+    def __init__(self, ctx: ScanContext):
+        self.ctx = ctx
+        self.config = ctx.config
+        self.result = ctx.result
+        self.session = ctx.session
+        self.target = self.config.normalized_target().rstrip("/")
+        self.timeout = self.config.timeout
+        self.threads = self.config.threads
 
-        self.session = build_session(proxy, max_retries, user_agent)
-        if cookies:
-            self.session.cookies.update(cookies)
-        if headers:
-            self.session.headers.update(headers)
+    # ---- 网络层 ------------------------------------------------------
+    def request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
+        """带作用域校验、限速、礼貌延迟与重试的统一请求入口。"""
+        if not self.config.in_scope(url):
+            host = url.split("/")[2] if "://" in url else url
+            if host not in self.ctx._scope_warned:
+                self.ctx._scope_warned.add(host)
+                log("SKIP", f"跳过作用域外目标: {host}")
+            return None
 
-    # ── HTTP 请求封装 ─────────────────────────────────────────
+        kwargs.setdefault("timeout", self.timeout)
+        if self.config.random_agent:
+            hdrs = dict(kwargs.get("headers") or {})
+            hdrs.setdefault("User-Agent", random.choice(USER_AGENTS))
+            kwargs["headers"] = hdrs
+
+        attempts = self.config.retries + 1
+        for i in range(attempts):
+            self.ctx.limiter.wait()
+            try:
+                resp = self.session.request(method, url, **kwargs)
+                self.result.incr_requests()
+                polite_delay(self.config.delay, self.config.jitter)
+                return resp
+            except (requests.ConnectionError, requests.Timeout):
+                if i < attempts - 1:
+                    # 指数退避
+                    import time
+                    time.sleep(0.3 * (2 ** i))
+                    continue
+                return None
+            except Exception:
+                return None
+        return None
 
     def get(self, url: str, **kwargs) -> Optional[requests.Response]:
-        """[优化] GET 请求，含速率限制 + 统一异常处理"""
-        self.rate_limiter.wait()
-        kwargs.setdefault("timeout", self.timeout)
-        kwargs.setdefault("verify",  False)
-        try:
-            resp = self.session.get(url, **kwargs)
-            log.debug(f"GET {url} → {resp.status_code}")
-            return resp
-        except requests.exceptions.Timeout:
-            log.debug(f"GET {url} 超时")
-            return None
-        except requests.exceptions.ConnectionError as e:
-            log.debug(f"GET {url} 连接失败: {e}")
-            return None
-        except Exception as e:
-            log.debug(f"GET {url} 异常: {type(e).__name__}: {e}")
-            return None
+        return self.request("GET", url, **kwargs)
 
-    def post(
-        self,
-        url:           str,
-        data           = None,
-        json_data      = None,
-        extra_headers: Dict = None,
-        **kwargs,
-    ) -> Optional[requests.Response]:
-        """[优化] POST 请求，extra_headers 不污染 session"""
-        self.rate_limiter.wait()
-        kwargs.setdefault("timeout", self.timeout)
-        kwargs.setdefault("verify",  False)
-        if extra_headers:
-            kwargs["headers"] = {**dict(self.session.headers), **extra_headers}
-        try:
-            resp = self.session.post(url, data=data, json=json_data, **kwargs)
-            log.debug(f"POST {url} → {resp.status_code}")
-            return resp
-        except requests.exceptions.Timeout:
-            log.debug(f"POST {url} 超时")
-            return None
-        except Exception as e:
-            log.debug(f"POST {url} 异常: {type(e).__name__}: {e}")
-            return None
+    def post(self, url: str, data=None, json=None, **kwargs) -> Optional[requests.Response]:
+        return self.request("POST", url, data=data, json=json, **kwargs)
 
-    def request(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
-        """[新增] 任意 HTTP 方法"""
-        self.rate_limiter.wait()
-        kwargs.setdefault("timeout", self.timeout)
-        kwargs.setdefault("verify",  False)
-        try:
-            resp = self.session.request(method, url, **kwargs)
-            log.debug(f"{method} {url} → {resp.status_code}")
-            return resp
-        except Exception as e:
-            log.debug(f"{method} {url} 异常: {type(e).__name__}: {e}")
-            return None
-
-    # ── URL 工具 ──────────────────────────────────────────────
-
-    def build_url(self, path: str) -> str:
-        """[优化] 重命名 url() → build_url()，语义更清晰"""
+    # ---- 助手 --------------------------------------------------------
+    def url(self, path: str) -> str:
         return f"{self.target}/{path.lstrip('/')}"
 
-    # 向后兼容别名
-    def url(self, path: str) -> str:
-        return self.build_url(path)
+    def baseline(self, url: str = None) -> Optional[requests.Response]:
+        """获取（并缓存）某 URL 的基线响应，避免重复抓取。"""
+        url = url or self.target
+        with self.ctx._baseline_lock:
+            if url in self.ctx._baseline:
+                return self.ctx._baseline[url]
+        resp = self.get(url)
+        with self.ctx._baseline_lock:
+            self.ctx._baseline[url] = resp
+        return resp
 
-    def same_origin(self, url: str) -> bool:
-        """[新增] 判断 URL 是否与目标同源"""
-        return urlparse(url).netloc == urlparse(self.target).netloc
+    def map(self, fn: Callable, items: Iterable, workers: int = None) -> List:
+        """并发对 items 执行 fn，返回非 None 结果列表。"""
+        items = list(items)
+        if not items:
+            return []
+        workers = workers or self.threads
+        results = []
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            futures = [ex.submit(fn, it) for it in items]
+            for fut in as_completed(futures):
+                try:
+                    res = fut.result()
+                except Exception:
+                    res = None
+                if res is not None:
+                    results.append(res)
+        return results
 
-    # ── 进度上报 ──────────────────────────────────────────────
+    def add(self, category, severity, detail, evidence="", url="", confidence="确认"):
+        return self.result.add(category, severity, detail, evidence, url, confidence)
 
-    def report_progress(self, message: str):
-        """[新增] 模块进度回调"""
-        if self.progress_cb:
-            self.progress_cb(message)
-
-
-    def _log_module_done(self, module_name: str, before_count: int):
+    def injection_targets(self, common_params: list = None) -> list:
         """
-        [新增] 模块结束时，根据本次新增发现数量给出提示
-        before_count: run() 开始前的 findings 数量
+        构造 (url, method, params, param_name) 测试目标列表：
+          - 爬虫发现的每个注入点的每个参数
+          - 若未发现真实参数，则在种子 URL 上退回测试 common_params
         """
-        added = self.result.total() - before_count
-        if added > 0:
-            log.warning(f"[{module_name}] 发现 {added} 个问题")
-        else:
-            log.info(f"[{module_name}] 未发现问题")
+        targets = []
+        real_found = False
+        for ip in self.ctx.injection_points:
+            if ip["source"] in ("url", "form"):
+                real_found = True
+            for pname in ip["params"]:
+                targets.append((ip["url"], ip["method"], dict(ip["params"]), pname))
 
-    def _req(self, method: str, url: str, params: dict = None) -> "Optional[requests.Response]":
-        """[优化] 通用请求方法，自动选择 GET/POST"""
-        if method == "POST":
-            return self.post(url, data=params)
-        return self.get(url, params=params)
+        if not real_found and common_params:
+            seed = self.target
+            for pname in common_params:
+                targets.append((seed, "GET", {pname: "1"}, pname))
+        return targets
 
     def run(self):
         raise NotImplementedError

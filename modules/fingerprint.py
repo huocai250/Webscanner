@@ -1,224 +1,162 @@
 """
-指纹识别模块 — WebVulnScanner v7.0
+指纹识别模块（被动）
 Author: 火柴 | GitHub: huocai250
 
-[新增] 扩充指纹库：
-  - 100+ 框架/CMS/中间件/数据库 指纹
-  - 多维度识别：HTTP头/响应体/Cookie/路径/错误页
-  - 版本号提取
+从响应头 / Cookie / 正文 / meta / 特定路径被动识别目标技术栈：
+CMS、Web 框架、服务器、CDN、WAF、开发语言、数据库等。
+结果写入 ScanContext.fingerprints，供 CMS 专项等模块消费。
 """
 import re
-import logging
-from typing import Dict, List, Tuple
 from core.scanner import BaseScanner
+from core.colors import log
 
-log = logging.getLogger("webscan")
-
-# ── 指纹规则库 ────────────────────────────────────────────────
-# 格式: (名称, 类别, [(检测位置, 匹配模式), ...], 版本提取正则)
-# 检测位置: header / body / cookie / path / title / server
-
-FINGERPRINTS: List[Tuple] = [
-    # ── Web 框架 ──────────────────────────────────────────────
-    ("WordPress",     "CMS",        [("body",   r"wp-content|wp-includes|wordpress"),
-                                     ("body",   r"/wp-json/")], r"WordPress (\d+\.\d+)"),
-    ("Joomla",        "CMS",        [("body",   r"joomla|/components/com_")], r"Joomla[! ]+(\d[\d.]+)"),
-    ("Drupal",        "CMS",        [("body",   r"drupal|/sites/default/files"),
-                                     ("header", r"x-drupal")], r"Drupal (\d+)"),
-    ("Magento",       "CMS",        [("body",   r"mage/cookies|magento"),
-                                     ("cookie", r"frontend=")], None),
-    ("TYPO3",         "CMS",        [("body",   r"typo3|/typo3conf/")], r"TYPO3 (\d+\.\d+)"),
-    ("Shopify",       "CMS",        [("header", r"x-shopid"),
-                                     ("body",   r"shopify")], None),
-    ("Ghost",         "CMS",        [("body",   r"ghost-url|content=\"Ghost")], r"Ghost/(\d+\.\d+)"),
-    ("Discuz",        "CMS",        [("body",   r"discuz|powered by discuz")], r"Discuz[! ]+(\w+)"),
-    ("DedeCMS",       "CMS",        [("body",   r"dedecms|/dede/")], None),
-    ("PHPCMS",        "CMS",        [("body",   r"phpcms|/phpcms/")], None),
-    ("Empire CMS",    "CMS",        [("body",   r"empirecms|e_webbak")], None),
-
-    # ── 前端框架 ──────────────────────────────────────────────
-    ("React",         "Frontend",   [("body",   r"react\.js|react-dom|__REACT")], r"React[/ ](\d+\.\d+)"),
-    ("Vue.js",        "Frontend",   [("body",   r"vue\.min\.js|__vue__|Vue\.js")], r"Vue\.js[/ ](\d+\.\d+)"),
-    ("Angular",       "Frontend",   [("body",   r"ng-version|angular\.js")], r"Angular[/ ](\d+\.\d+)"),
-    ("Next.js",       "Frontend",   [("body",   r"__next|/_next/static")], r"Next\.js (\d+\.\d+)"),
-    ("Nuxt.js",       "Frontend",   [("body",   r"__nuxt|/_nuxt/")], None),
-    ("jQuery",        "Library",    [("body",   r"jquery\.min\.js|jQuery v")], r"jQuery[/ v]+(\d+\.\d+\.\d+)"),
-    ("Bootstrap",     "Library",    [("body",   r"bootstrap\.min\.(css|js)")], r"Bootstrap[/ v]+(\d+\.\d+)"),
-    ("Layui",         "Library",    [("body",   r"layui|layui\.js")], None),
-    ("Element UI",    "Library",    [("body",   r"element-ui|el-button")], None),
-
-    # ── 后端框架 ──────────────────────────────────────────────
-    ("Laravel",       "Framework",  [("body",   r"laravel_session|laravel\.com"),
-                                     ("cookie", r"laravel_session|XSRF-TOKEN")], r"Laravel[/ ](\d+\.\d+)"),
-    ("Symfony",       "Framework",  [("body",   r"symfony|sf_redirect"),
-                                     ("header", r"x-symfony")], r"Symfony[/ ](\d+\.\d+)"),
-    ("CodeIgniter",   "Framework",  [("body",   r"codeigniter|ci_session")], r"CodeIgniter[/ ](\d+\.\d+)"),
-    ("Django",        "Framework",  [("body",   r"csrfmiddlewaretoken|django"),
-                                     ("header", r"x-django")], None),
-    ("Flask",         "Framework",  [("body",   r"werkzeug|flask"),
-                                     ("header", r"werkzeug/")], r"Werkzeug[/ ](\d+\.\d+)"),
-    ("FastAPI",       "Framework",  [("body",   r"fastapi|pydantic"),
-                                     ("header", r"fastapi")], None),
-    ("Spring Boot",   "Framework",  [("body",   r"whitelabel error page|spring-boot"),
-                                     ("header", r"x-application-context")], r"Spring Boot[/ ](\d+\.\d+)"),
-    ("Spring MVC",    "Framework",  [("body",   r"spring-mvc|org\.springframework")], None),
-    ("Struts2",       "Framework",  [("body",   r"struts2|\.action\b")], r"Struts[/ ](\d+\.\d+)"),
-    ("ThinkPHP",      "Framework",  [("body",   r"thinkphp|think\\\\"),
-                                     ("header", r"thinkphp")], r"ThinkPHP[/ ](\d+\.\d+)"),
-    ("Yii",           "Framework",  [("body",   r"yii-debug|YII_DEBUG")], r"Yii[/ ](\d+\.\d+)"),
-    ("ASP.NET MVC",   "Framework",  [("body",   r"__requestverificationtoken|asp\.net mvc"),
-                                     ("header", r"x-aspnetmvc-version")], r"ASP\.NET MVC[/ ](\d+\.\d+)"),
-    ("ASP.NET",       "Framework",  [("body",   r"__viewstate|asp\.net"),
-                                     ("header", r"x-aspnet-version|x-powered-by.*asp\.net")], r"ASP\.NET[/ ](\d+\.\d+)"),
-    ("Ruby on Rails", "Framework",  [("body",   r"rails|ruby on rails"),
-                                     ("header", r"x-rails-version|x-runtime")], r"Rails[/ ](\d+\.\d+)"),
-    ("Express.js",    "Framework",  [("header", r"x-powered-by.*express")], r"Express[/ ](\d+\.\d+)"),
-    ("Gin",           "Framework",  [("header", r"x-powered-by.*gin")], None),
-    ("Echo",          "Framework",  [("header", r"x-powered-by.*echo")], None),
-
-    # ── Web 服务器 ────────────────────────────────────────────
-    ("Nginx",         "Server",     [("header", r"^nginx"),
-                                     ("body",   r"nginx/\d|welcome to nginx")], r"nginx[/ ](\d+\.\d+\.\d+)"),
-    ("Apache",        "Server",     [("header", r"^apache"),
-                                     ("body",   r"apache/\d|apache2 default")], r"Apache[/ ](\d+\.\d+\.\d+)"),
-    ("IIS",           "Server",     [("header", r"microsoft-iis"),
-                                     ("body",   r"iis windows server|internet information services")], r"IIS[/ ](\d+\.\d+)"),
-    ("Tomcat",        "Server",     [("body",   r"apache tomcat|tomcat/\d"),
-                                     ("header", r"x-powered-by.*tomcat")], r"Tomcat[/ ](\d+\.\d+\.\d+)"),
-    ("WebLogic",      "Server",     [("body",   r"weblogic|bea weblogic"),
-                                     ("header", r"x-powered-by.*weblogic")], r"WebLogic[/ ](\d+\.\d+)"),
-    ("JBoss",         "Server",     [("body",   r"jboss|jbossas"),
-                                     ("header", r"x-powered-by.*jboss")], r"JBoss[/ ](\d+\.\d+)"),
-    ("Jetty",         "Server",     [("header", r"jetty"),
-                                     ("body",   r"jetty/\d")], r"Jetty[/ ](\d+\.\d+)"),
-    ("Caddy",         "Server",     [("header", r"caddy")], r"Caddy[/ ](\d+\.\d+)"),
-    ("OpenResty",     "Server",     [("header", r"openresty")], r"openresty[/ ](\d+\.\d+)"),
-
-    # ── 安全产品 / CDN ────────────────────────────────────────
-    ("Cloudflare",    "CDN/WAF",    [("header", r"cf-ray|__cfduid|cloudflare")], None),
-    ("AWS CloudFront","CDN",        [("header", r"x-amz-cf-id|cloudfront\.net")], None),
-    ("Akamai",        "CDN/WAF",    [("header", r"akamai|ak_bmsc|x-akamai")], None),
-    ("Fastly",        "CDN",        [("header", r"x-fastly|fastly-")], None),
-    ("ModSecurity",   "WAF",        [("body",   r"mod_security|modsecurity"),
-                                     ("header", r"mod-security")], None),
-    ("Sucuri",        "WAF",        [("header", r"x-sucuri-id|sucuri")], None),
-    ("F5 BIG-IP",     "WAF",        [("cookie", r"bigipserver|f5_"),
-                                     ("header", r"bigipserver")], None),
-    ("SafeDog",       "WAF",        [("header", r"safedog"),
-                                     ("body",   r"safedog")], None),
-    ("D盾",           "WAF",        [("header", r"d_safe_"),
-                                     ("body",   r"d盾")], None),
-
-    # ── 数据库/中间件（通过报错页暴露）────────────────────────
-    ("MySQL",         "Database",   [("body",   r"mysql_error|you have an error in your sql syntax")], None),
-    ("PostgreSQL",    "Database",   [("body",   r"pg_query|postgresql.*error")], None),
-    ("MongoDB",       "Database",   [("body",   r"mongodb|mongoclient")], None),
-    ("Redis",         "Middleware", [("body",   r"\+PONG|redis_version")], r"redis_version[: ]+(\d+\.\d+)"),
-    ("Elasticsearch", "Middleware", [("body",   r"elasticsearch|lucene_version")], r"\"number\"\s*:\s*\"(\d+\.\d+\.\d+)\""),
-    ("RabbitMQ",      "Middleware", [("body",   r"rabbitmq|amqp")], None),
-    ("Kafka",         "Middleware", [("body",   r"kafka\.producer|org\.apache\.kafka")], None),
-
-    # ── 运维/监控 ─────────────────────────────────────────────
-    ("Jenkins",       "DevOps",     [("body",   r"jenkins|hudson"),
-                                     ("header", r"x-jenkins")], r"Jenkins[/ ](\d+\.\d+)"),
-    ("GitLab",        "DevOps",     [("body",   r"gitlab|gl-token")], r"GitLab[/ ](\d+\.\d+)"),
-    ("Grafana",       "Monitoring", [("body",   r"grafana|dashboard.*panel")], r"Grafana[/ v]+(\d+\.\d+)"),
-    ("Prometheus",    "Monitoring", [("body",   r"prometheus|/metrics")], None),
-    ("Kibana",        "Monitoring", [("body",   r"kibana|kbn-version")], r"kbn-version.*(\d+\.\d+)"),
-    ("Zabbix",        "Monitoring", [("body",   r"zabbix|zbx_session")], r"Zabbix[/ ](\d+\.\d+)"),
-    ("Portainer",     "DevOps",     [("body",   r"portainer|docker management")], None),
-    ("Nacos",         "Middleware", [("body",   r"nacos|com\.alibaba\.nacos")], None),
-    ("Consul",        "Middleware", [("body",   r"consul/v1|hashicorp consul")], None),
+# 规则：(名称, 类别, 匹配位置, 正则)
+# 匹配位置: header:<名> / cookie / body / meta-generator / any-header
+FINGERPRINTS = [
+    # ---- 服务器 ----
+    ("Nginx", "服务器", "header:server", r"nginx"),
+    ("Apache", "服务器", "header:server", r"apache"),
+    ("IIS", "服务器", "header:server", r"microsoft-iis"),
+    ("LiteSpeed", "服务器", "header:server", r"litespeed"),
+    ("Tomcat", "服务器", "header:server", r"(tomcat|coyote)"),
+    ("Jetty", "服务器", "header:server", r"jetty"),
+    ("OpenResty", "服务器", "header:server", r"openresty"),
+    ("Gunicorn", "服务器", "header:server", r"gunicorn"),
+    ("Kestrel", "服务器", "header:server", r"kestrel"),
+    # ---- 开发语言 ----
+    ("PHP", "语言", "header:x-powered-by", r"php"),
+    ("PHP", "语言", "header:set-cookie", r"phpsessid"),
+    ("ASP.NET", "语言", "header:x-powered-by", r"asp\.net"),
+    ("ASP.NET", "语言", "header:x-aspnet-version", r".+"),
+    ("ASP.NET", "语言", "header:set-cookie", r"asp\.net_sessionid"),
+    ("Java", "语言", "header:set-cookie", r"jsessionid"),
+    ("Python", "语言", "header:x-powered-by", r"(python|werkzeug|flask)"),
+    ("Node.js", "语言", "header:x-powered-by", r"express"),
+    ("Ruby", "语言", "header:x-powered-by", r"(phusion|passenger)"),
+    # ---- Web 框架 ----
+    ("Express", "框架", "header:x-powered-by", r"express"),
+    ("Django", "框架", "header:set-cookie", r"(csrftoken|django)"),
+    ("Flask", "框架", "header:server", r"werkzeug"),
+    ("Laravel", "框架", "header:set-cookie", r"laravel_session"),
+    ("Ruby on Rails", "框架", "header:set-cookie", r"_rails|_session_id"),
+    ("Spring Boot", "框架", "any-header", r"x-application-context"),
+    ("ThinkPHP", "框架", "header:x-powered-by", r"thinkphp"),
+    ("Symfony", "框架", "header:set-cookie", r"symfony"),
+    ("Next.js", "框架", "any-header", r"x-nextjs"),
+    ("ASP.NET MVC", "框架", "any-header", r"x-aspnetmvc-version"),
+    # ---- CMS ----
+    ("WordPress", "CMS", "meta-generator", r"wordpress"),
+    ("WordPress", "CMS", "body", r"/wp-(content|includes|json)/"),
+    ("Joomla", "CMS", "meta-generator", r"joomla"),
+    ("Joomla", "CMS", "body", r"/media/jui/|option=com_"),
+    ("Drupal", "CMS", "meta-generator", r"drupal"),
+    ("Drupal", "CMS", "any-header", r"x-drupal-cache|x-generator.*drupal"),
+    ("Magento", "CMS", "body", r"(mage/|magento|/static/version)"),
+    ("Shopify", "CMS", "any-header", r"x-shopify"),
+    ("DedeCMS", "CMS", "body", r"/dede/|dedecms|power by dede"),
+    ("Discuz", "CMS", "body", r"(discuz|content=\"discuz)"),
+    ("Typecho", "CMS", "meta-generator", r"typecho"),
+    ("Ghost", "CMS", "meta-generator", r"ghost"),
+    # ---- CDN / WAF ----
+    ("Cloudflare", "CDN", "any-header", r"cf-ray|__cfduid|cloudflare"),
+    ("Akamai", "CDN", "any-header", r"akamai|x-akamai"),
+    ("Fastly", "CDN", "any-header", r"fastly|x-served-by.*cache"),
+    ("CloudFront", "CDN", "any-header", r"cloudfront|x-amz-cf-id"),
+    ("阿里云 CDN", "CDN", "any-header", r"(ali-swift|x-swift|via.*aliyun)"),
+    ("Cloudflare WAF", "WAF", "any-header", r"cf-ray"),
+    ("ModSecurity", "WAF", "any-header", r"mod_security|modsecurity"),
+    ("Sucuri WAF", "WAF", "any-header", r"sucuri|x-sucuri"),
+    ("Wallarm WAF", "WAF", "any-header", r"wallarm"),
+    ("Safedog 安全狗", "WAF", "any-header", r"safedog"),
+    ("Yundun 云盾", "WAF", "any-header", r"yunsuo|yundun"),
+    # ---- 分析/其他 ----
+    ("Google Analytics", "分析", "body", r"google-analytics\.com|gtag\("),
+    ("jQuery", "前端库", "body", r"jquery[.-]?\d|jquery\.min\.js"),
+    ("React", "前端库", "body", r"react(\.min)?\.js|data-reactroot"),
+    ("Vue.js", "前端库", "body", r"vue(\.min)?\.js|data-v-"),
+    ("Bootstrap", "前端库", "body", r"bootstrap(\.min)?\.(css|js)"),
 ]
 
-# 风险等级映射（某些技术暴露本身就有安全意义）
-RISK_MAP = {
-    "Struts2":      "HIGH",    # 大量已知 RCE CVE
-    "WebLogic":     "HIGH",    # 反序列化漏洞高发
-    "Shiro":        "HIGH",    # rememberMe 反序列化
-    "ThinkPHP":     "HIGH",    # RCE 漏洞高发
-    "Jenkins":      "MEDIUM",  # 可能未授权
-    "Elasticsearch":"MEDIUM",  # 可能未授权
-    "Redis":        "MEDIUM",  # 可能未授权
-    "MongoDB":      "MEDIUM",  # 可能未授权
-    "ModSecurity":  "INFO",
-    "Cloudflare":   "INFO",
-    "SafeDog":      "INFO",
-    "D盾":          "INFO",
-}
 
-
-# [优化] 预编译所有正则，避免每次扫描重复编译
-_COMPILED: dict = {}
-
-def _get_pattern(pattern: str):
-    if pattern not in _COMPILED:
-        try:
-            _COMPILED[pattern] = re.compile(pattern, re.I)
-        except re.error:
-            _COMPILED[pattern] = None
-    return _COMPILED[pattern]
-
-
-class FingerprintScanner(BaseScanner):
-    """多维度指纹识别，100+ 规则"""
+class Fingerprinter(BaseScanner):
+    name = "fingerprint"
+    passive = True
 
     def run(self):
-        _before = self.result.total()
-        log.info("指纹识别扫描（100+ 规则）...")
-
-        r = self.get(self.target)
+        log("INFO", "指纹识别（服务器/框架/CMS/CDN/WAF）...")
+        r = self.baseline(self.target)
         if not r:
-            self._log_module_done("指纹识别", _before)
+            log("WARN", "无法获取响应，跳过指纹识别")
             return
 
-        # 收集各维度数据
-        body   = r.text.lower()
-        hdrs   = str(dict(r.headers)).lower()
-        cookies = str(dict(r.cookies)).lower()
-        server  = r.headers.get("Server", "").lower()
-        title_m = re.search(r'<title>(.*?)</title>', r.text, re.I)
-        title   = title_m.group(1).lower() if title_m else ""
+        headers = {k.lower(): v for k, v in r.headers.items()}
+        # set-cookie 可能有多个，合并
+        set_cookie = " ".join(v for k, v in r.headers.items()
+                              if k.lower() == "set-cookie")
+        if set_cookie:
+            headers["set-cookie"] = set_cookie
+        header_blob = " ".join(f"{k}: {v}" for k, v in headers.items())
+        body = r.text or ""
+        gen = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)',
+                        body, re.I)
+        generator = gen.group(1) if gen else ""
 
-        detected = []
+        for name, cat, where, pattern in FINGERPRINTS:
+            hay = ""
+            if where.startswith("header:"):
+                hay = headers.get(where.split(":", 1)[1], "")
+            elif where == "any-header":
+                hay = header_blob
+            elif where == "cookie":
+                hay = headers.get("set-cookie", "")
+            elif where == "meta-generator":
+                hay = generator
+            elif where == "body":
+                hay = body[:60000]
+            if hay and re.search(pattern, hay, re.I):
+                version = self._version_for(name, cat, headers, generator)
+                self.ctx.add_fingerprint(name, cat, version)
 
-        for name, category, rules, version_re in FINGERPRINTS:
-            matched = False
-            for location, pattern in rules:
-                target_text = {
-                    "body":   body,
-                    "header": hdrs,
-                    "cookie": cookies,
-                    "server": server,
-                    "title":  title,
-                    "path":   "",
-                }.get(location, body)
+        fps = self.ctx.fingerprints
+        if fps:
+            by_cat = {}
+            for f in fps:
+                by_cat.setdefault(f["category"], []).append(
+                    f["name"] + (f" {f['version']}" if f["version"] else ""))
+            for cat, names in by_cat.items():
+                detail = f"{cat}: {', '.join(sorted(set(names)))}"
+                log("INFO", f"  指纹 - {detail}")
+                self.add("信息泄露", "INFO", f"识别到 {detail}",
+                         url=self.target, confidence="信息")
+            # WAF 单独提醒
+            wafs = [f["name"] for f in fps if f["category"] == "WAF"]
+            if wafs:
+                self.add("信息泄露", "INFO",
+                         f"检测到 WAF: {', '.join(sorted(set(wafs)))}（后续检测可能被拦截）",
+                         url=self.target, confidence="信息")
+        else:
+            log("INFO", "  未匹配到已知指纹")
 
-                compiled = _get_pattern(pattern)
-                if compiled and compiled.search(target_text):
-                    matched = True
-                    break
+    @staticmethod
+    def _version_for(name, category, headers, generator) -> str:
+        """按来源精确取版本，避免把 CMS 的 generator 版本误套到语言/服务器上。"""
+        # 语言/框架：优先从 x-powered-by 抓「名称/版本」
+        xpb = headers.get("x-powered-by", "")
+        if name == "ASP.NET":
+            return headers.get("x-aspnet-version", "") or _match(rf'ASP\.NET[/ ]?([\d.]+)', xpb)
+        if name == "PHP":
+            return _match(r'PHP/([\d.]+)', xpb)
+        if name in ("Express", "Node.js", "Python"):
+            return _match(rf'{re.escape(name)}[/ ]([\d.]+)', xpb)
+        # 服务器：从 Server 头抓
+        if category == "服务器":
+            return _match(rf'{re.escape(name)}[/ ]([\d.]+)', headers.get("server", ""))
+        # CMS：才用 meta generator 的版本
+        if category == "CMS" and generator:
+            return _match(r'([\d]+\.[\d.]+)', generator)
+        return ""
 
-            if matched:
-                # 提取版本号
-                version = ""
-                if version_re:
-                    vpat = _get_pattern(version_re)
-                    vm = vpat.search(r.text) if vpat else None
-                    if vm:
-                        version = vm.group(1)
 
-                severity = RISK_MAP.get(name, "INFO")
-                detail   = f"[{category}] {name}" + (f" v{version}" if version else "")
-                log.info(f"指纹: {detail}")
-
-                if severity in ("HIGH", "MEDIUM"):
-                    log.warning(f"[VULN][指纹] {detail} — 存在已知高危漏洞风险")
-
-                self.result.add("指纹识别", severity, detail, url=self.target)
-                detected.append(f"{name}{'@'+version if version else ''}")
-
-        if detected:
-            log.info(f"识别到 {len(detected)} 个组件: {', '.join(detected[:8])}")
-
-        self._log_module_done("指纹识别", _before)
+def _match(pattern, text):
+    m = re.search(pattern, text or "", re.I)
+    return m.group(1) if m else ""

@@ -1,76 +1,78 @@
 """
-子域名枚举模块
+子域名枚举模块（主动 / 需网络与授权）
 Author: 火柴 | GitHub: huocai250
+
+基于字典对目标主域做 DNS 解析枚举，发现存活子域名。属于信息收集/攻击面
+梳理，请仅在获得授权、且这些子域属于目标范围时使用。
+
+说明：仅做 DNS 解析（socket.gethostbyname），不对子域发起进一步扫描；
+如需扫描发现的子域，请在授权范围内单独指定目标。
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
 from core.scanner import BaseScanner
+from core.colors import log
 
-SUBDOMAINS = [
-    "www", "mail", "ftp", "admin", "api", "dev", "test", "staging",
-    "beta", "demo", "portal", "app", "m", "mobile", "shop", "store",
-    "blog", "forum", "help", "support", "docs", "wiki", "cdn",
-    "static", "assets", "media", "img", "images", "upload", "uploads",
-    "vpn", "remote", "rdp", "ssh", "smtp", "pop", "imap", "webmail",
-    "login", "auth", "sso", "account", "accounts", "user", "users",
-    "db", "database", "mysql", "sql", "oracle", "redis", "mongo",
-    "jenkins", "gitlab", "github", "ci", "cd", "deploy", "build",
-    "jira", "confluence", "bitbucket", "svn", "git",
-    "grafana", "kibana", "elastic", "monitor", "metrics", "logs",
-    "backup", "bak", "old", "new", "v1", "v2",
-    "uat", "qa", "preprod", "sandbox", "local",
-    "intranet", "internal", "corp", "extranet",
-    "ns", "ns1", "ns2", "dns", "mx",
-    "proxy", "gateway", "firewall", "lb", "loadbalancer",
-    "kubernetes", "k8s", "docker", "registry",
-    "s3", "storage", "bucket", "files",
-    "payment", "pay", "billing", "invoice",
+DEFAULT_SUBS = [
+    "www", "mail", "ftp", "admin", "webmail", "smtp", "pop", "ns1", "ns2",
+    "test", "dev", "staging", "api", "app", "portal", "vpn", "m", "mobile",
+    "blog", "shop", "store", "cdn", "static", "img", "assets", "media",
+    "docs", "help", "support", "status", "dashboard", "panel", "cpanel",
+    "git", "gitlab", "jenkins", "ci", "jira", "wiki", "demo", "beta",
+    "internal", "intranet", "corp", "office", "remote", "gateway", "proxy",
+    "db", "database", "mysql", "redis", "cache", "backup", "old", "new",
+    "secure", "login", "auth", "sso", "oauth", "id", "account", "user",
+    "monitor", "grafana", "kibana", "prometheus", "es", "elastic", "solr",
 ]
 
 
 class SubdomainScanner(BaseScanner):
+    name = "subdomain"
+    passive = False
+
     def run(self):
-        _before = self.result.total()
-        hostname = urlparse(self.target).hostname or ""
-        # 提取主域
-        parts = hostname.split(".")
-        if len(parts) < 2:
-            log.info("[SKIP] " +  f"无法提取主域名: {hostname}")
+        domain = self.config.host()
+        # 去掉可能的 www. 前缀，取主域
+        base = domain[4:] if domain.startswith("www.") else domain
+        if not base or base.replace(".", "").isdigit():
+            log("INFO", "目标为 IP 或无有效域名，跳过子域名枚举")
             return
-        base_domain = ".".join(parts[-2:])
-        log.info( f"子域名枚举 (基域: {base_domain}, {len(SUBDOMAINS)} 个字典)...")
 
+        words = self._load_words()
+        log("INFO", f"子域名枚举（{len(words)} 条字典 -> {base}）...")
         found = []
-        with ThreadPoolExecutor(max_workers=self.threads * 2) as executor:
-            futures = {
-                executor.submit(self._resolve, f"{sub}.{base_domain}"): sub
-                for sub in SUBDOMAINS
-            }
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                except Exception:
-                    result = None
-                if result:
-                    found.append(result)
+        with ThreadPoolExecutor(max_workers=min(50, self.threads * 4)) as ex:
+            futs = {ex.submit(self._resolve, f"{w}.{base}"): w for w in words}
+            for fut in as_completed(futs):
+                res = fut.result()
+                if res:
+                    host, ip = res
+                    found.append((host, ip))
+                    log("VULN", f"[子域名] {host} -> {ip}")
 
-        log.info( f"子域名枚举完成，发现 {len(found)} 个")
-        self._log_module_done("子域名枚举", _before)
+        if found:
+            listing = ", ".join(f"{h}({ip})" for h, ip in sorted(found))
+            self.add("信息泄露", "INFO",
+                     f"发现 {len(found)} 个存活子域名: {listing}",
+                     url=base, confidence="信息")
+        else:
+            log("INFO", "  未发现存活子域名")
 
-    def _resolve(self, fqdn):
+    def _load_words(self):
+        if self.config.subdomain_wordlist:
+            try:
+                with open(self.config.subdomain_wordlist, encoding="utf-8",
+                          errors="ignore") as f:
+                    return [ln.strip() for ln in f if ln.strip()
+                            and not ln.startswith("#")]
+            except OSError as e:
+                log("WARN", f"子域名字典读取失败: {e}，使用内置字典")
+        return DEFAULT_SUBS
+
+    @staticmethod
+    def _resolve(host):
         try:
-            ip = socket.gethostbyname(fqdn)
-            log.info( f"子域名: {fqdn} → {ip}")
-            self.result.add("子域名", "INFO",
-                            f"发现子域名: {fqdn} ({ip})", url=f"http://{fqdn}")
-            return fqdn
-        except socket.gaierror:
-            return None
-        except Exception:
+            ip = socket.gethostbyname(host)
+            return (host, ip)
+        except (socket.gaierror, OSError):
             return None

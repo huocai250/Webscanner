@@ -1,70 +1,67 @@
 """
-XXE（XML 外部实体注入）检测模块
+XXE（XML 外部实体）注入检测模块（主动 / 带内检测）
 Author: 火柴 | GitHub: huocai250
 
-修复:
-- 使用 BaseScanner.post 的 extra_headers 参数，而非手动合并
-- 改进 XML 端点探测：只测试返回200的端点
+对接受 XML 的端点发送包含实体定义的 payload，通过**带内回显**判断解析器
+是否处理了实体（内部实体展开 / 参数实体）。
+
+安全边界：本模块只做**存在性检测** —— 用内部实体展开一个无害标记来判断
+XML 解析器是否启用外部/参数实体处理。**不读取本地文件、不做数据外带、
+不发起 SSRF**。带外(OOB)文件读取属于利用行为，本工具不实现。
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import re
 from core.scanner import BaseScanner
+from core.colors import log
 
-XXE_PAYLOADS = [
-    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root><data>&xxe;</data></root>',
-    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///C:/windows/win.ini">]><root><data>&xxe;</data></root>',
-    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]><root><data>&xxe;</data></root>',
-]
+MARKER = "wvsxxe31337"
 
-XXE_SIGNATURES = [
-    r"root:.*:0:0:", r"\[boot loader\]", r"\[fonts\]",
-    r"daemon:", r"nobody:", r"ami-id", r"instance-id",
-]
+# 内部实体展开：若响应回显 MARKER，说明实体被解析（带内、无害）
+PROBE = f"""<?xml version="1.0"?>
+<!DOCTYPE data [ <!ENTITY x "{MARKER}"> ]>
+<data>&x;</data>"""
 
-XML_CONTENT_TYPE = {"Content-Type": "application/xml"}
-
-XML_ENDPOINTS = [
-    "/api", "/api/v1", "/api/v2", "/upload",
-    "/import", "/parse", "/convert", "/xml", "/soap",
-]
+# 探测目标端点（爬虫发现的 + 常见 API 路径）
+XML_PATHS = ["/", "/api", "/api/xml", "/xmlrpc.php", "/services",
+             "/soap", "/ws", "/upload"]
 
 
 class XXEScanner(BaseScanner):
+    name = "xxe"
+    passive = False
+
     def run(self):
-        _before = self.result.total()
-        log.info( "XXE 注入检测...")
-        # 先探测哪些端点响应 XML 请求
-        reachable = self._find_xml_endpoints()
-        reachable.append(self.target)  # 主目标也测
+        log("INFO", "XXE 注入检测（带内实体展开）...")
+        endpoints = self._endpoints()
+        found = self.map(self._test, endpoints)
+        if not found:
+            log("INFO", "  未发现可注入 XML 的端点")
 
-        for url in reachable:
-            for payload in XXE_PAYLOADS:
-                # 修复：使用 extra_headers 参数，不污染 session
-                r = self.post(url,
-                              data=payload.encode("utf-8"),
-                              extra_headers=XML_CONTENT_TYPE)
-                if r and self._has_xxe(r.text):
-                    log.warning("[VULN] " +  f"[XXE] 发现 XML 外部实体注入: {url}")
-                    self.result.add("XXE", "CRITICAL",
-                                    f"端点存在 XXE 注入漏洞",
-                                    r.text[:200], url=url)
-                    return  # 发现即停
+    def _endpoints(self):
+        eps = set()
+        # 爬虫发现的注入点里，method=POST 的更可能吃 XML
+        for ip in self.ctx.injection_points:
+            eps.add(ip["url"])
+        for p in XML_PATHS:
+            eps.add(self.url(p))
+        return list(eps)
 
-        log.info( "XXE 检测完成，未发现明显漏洞")
-        self._log_module_done("XXE", _before)
-
-    def _find_xml_endpoints(self) -> list:
-        found = []
-        for path in XML_ENDPOINTS:
-            url = self.build_url(path)
-            r   = self.get(url)
-            if r and r.status_code in [200, 201, 405, 415]:
-                found.append(url)
-        return found
-
-    def _has_xxe(self, text: str) -> bool:
-        return any(re.search(p, text) for p in XXE_SIGNATURES)
+    def _test(self, endpoint):
+        headers = {"Content-Type": "application/xml"}
+        r = self.post(endpoint, data=PROBE, headers=headers)
+        if not r or not r.text:
+            return None
+        # 回显了展开后的实体值 => 解析器处理了实体
+        if MARKER in r.text and PROBE not in r.text:
+            log("VULN", f"[XXE] 端点解析 XML 实体: {endpoint}")
+            self.add("XXE 注入", "HIGH",
+                     "端点解析 XML 外部/内部实体（存在 XXE 风险，可能被用于文件读取/SSRF）",
+                     evidence=f"内部实体展开回显 @ {endpoint}", url=endpoint,
+                     confidence="疑似")
+            return endpoint
+        # 报错也可能指示 XML 被解析
+        if re.search(r"(DOCTYPE is not allowed|external entity|XML parsing|"
+                     r"SAXParseException|lxml\.etree)", r.text, re.I):
+            self.add("XXE 注入", "LOW",
+                     "端点返回 XML 解析相关信息，建议人工确认是否禁用外部实体",
+                     evidence=endpoint, url=endpoint, confidence="疑似")
+        return None

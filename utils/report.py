@@ -1,222 +1,281 @@
 """
-报告生成模块 — WebVulnScanner v7.0
+报告生成模块（终端 / JSON / HTML / Markdown / CSV）
 Author: 火柴 | GitHub: huocai250
 
-[新增] CSV 格式输出
-[优化] HTML 报告：加入利用结果列、漏洞统计图
-[修复] 所有字段 HTML 转义防止 XSS
+v4.0 改进：
+  - HTML 报告全字段转义（修复报告自身可被注入的问题）
+  - 增加风险评分/等级、按严重程度分组、每类修复建议、置信度
+  - 新增 Markdown 与 CSV 导出
 """
-import json
 import csv
-import html as html_mod
-import logging
+import json
+import html
 from datetime import datetime
-from pathlib import Path
+from core.colors import Colors, raw
 from core.result import ScanResult
-from core.logger import C
+from core import remediation
 
-log = logging.getLogger("webscan")
+SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+SEV_COLOR = {
+    "CRITICAL": "#ff4444", "HIGH": "#ff7700",
+    "MEDIUM": "#ffcc00", "LOW": "#44aaff", "INFO": "#8b949e",
+}
+GRADE_COLOR = {"严重": "#ff4444", "高危": "#ff7700", "中危": "#ffcc00",
+               "低危": "#44aaff", "良好": "#3fb950"}
 
 
-def _esc(s) -> str:
-    """HTML 转义"""
-    return html_mod.escape(str(s), quote=True)
-
-
-# ── 终端输出 ──────────────────────────────────────────────────
+# ---------------------------------------------------------------- 终端
 def print_terminal(result: ScanResult):
     counts = result.summary()
-    total  = result.total()
-    print(f"\n{C.BOLD}{'═'*70}{C.RESET}")
-    print(f"{C.BOLD}  WebVulnScanner v7.0 扫描报告  |  {result.target}{C.RESET}")
-    print(f"{'═'*70}")
-    print(f"  目    标 : {result.target}")
-    print(f"  开始时间 : {result.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  耗    时 : {result.elapsed()}")
-    print(f"  发现总数 : {total}")
-    print(f"  风险分布 : "
-          f"{C.RED}{C.BOLD}CRITICAL:{counts['CRITICAL']}  HIGH:{counts['HIGH']}{C.RESET}  "
-          f"{C.YELLOW}MEDIUM:{counts['MEDIUM']}{C.RESET}  "
-          f"{C.BLUE}LOW:{counts['LOW']}{C.RESET}  "
-          f"INFO:{counts['INFO']}")
-    print(f"{'═'*70}\n")
+    total = sum(counts.values())
+    score = result.risk_score()
+    grade = result.risk_grade()
 
-    sev_colors = {
-        "CRITICAL": C.RED + C.BOLD, "HIGH": C.RED,
-        "MEDIUM":   C.YELLOW,       "LOW":  C.BLUE, "INFO": C.CYAN,
-    }
-    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+    raw(f"\n{Colors.BOLD}{'═'*65}{Colors.RESET}")
+    raw(f"{Colors.BOLD}  扫描报告  |  {result.target}{Colors.RESET}")
+    raw(f"{'═'*65}")
+    raw(f"  开始时间 : {result.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    raw(f"  耗时     : {result.elapsed()}   |   请求数: {result.request_count}")
+    raw(f"  风险评分 : {Colors.BOLD}{score}/100  [{grade}]{Colors.RESET}")
+    raw(f"  发现总数 : {total}")
+    raw(f"  风险分布 : "
+        f"{Colors.RED}CRITICAL:{counts['CRITICAL']}  HIGH:{counts['HIGH']}{Colors.RESET}  "
+        f"{Colors.YELLOW}MEDIUM:{counts['MEDIUM']}{Colors.RESET}  "
+        f"{Colors.BLUE}LOW:{counts['LOW']}{Colors.RESET}  "
+        f"INFO:{counts['INFO']}")
+    raw(f"{'═'*65}\n")
+
+    for sev in SEV_ORDER:
         items = result.by_severity(sev)
         if not items:
             continue
-        color = sev_colors[sev]
-        print(f"{color}▶ {sev} ({len(items)}){C.RESET}")
+        color = {
+            "CRITICAL": Colors.RED + Colors.BOLD, "HIGH": Colors.RED,
+            "MEDIUM": Colors.YELLOW, "LOW": Colors.BLUE, "INFO": Colors.CYAN,
+        }[sev]
+        raw(f"{color}▶ {sev} ({len(items)}){Colors.RESET}")
         for item in items:
-            print(f"  {C.DIM}[{item.category}]{C.RESET} {item.detail}")
+            conf = f" {Colors.DIM}({item.confidence}){Colors.RESET}" if item.confidence != "确认" else ""
+            raw(f"  {Colors.DIM}[{item.category}]{Colors.RESET} {item.detail}{conf}")
             if item.url:
-                print(f"    {C.DIM}URL     : {item.url}{C.RESET}")
+                raw(f"    {Colors.DIM}URL     : {item.url}{Colors.RESET}")
             if item.evidence:
-                print(f"    {C.DIM}Evidence: {str(item.evidence)[:120]}{C.RESET}")
-            if item.exploit_result:
-                print(f"    {C.GREEN}利用结果: {item.exploit_result[:200]}{C.RESET}")
-        print()
+                raw(f"    {Colors.DIM}Evidence: {str(item.evidence)[:120]}{Colors.RESET}")
+        raw("")
 
 
-# ── JSON ─────────────────────────────────────────────────────
+# ---------------------------------------------------------------- JSON
 def save_json(result: ScanResult, path: str):
     data = {
         "meta": {
-            "tool":      "WebVulnScanner v7.0",
-            "author":    "火柴",
-            "github":    "https://github.com/huocai250",
-            "target":    result.target,
+            "tool": "WebVulnScanner v4.0",
+            "author": "火柴",
+            "github": "https://github.com/huocai250",
+            "target": result.target,
             "scan_time": result.start_time.isoformat(),
-            "elapsed":   result.elapsed(),
+            "elapsed": result.elapsed(),
+            "requests": result.request_count,
+            "risk_score": result.risk_score(),
+            "risk_grade": result.risk_grade(),
         },
-        "summary":  result.summary(),
-        "findings": [f.to_dict() for f in result.sorted_findings()],
+        "summary": result.summary(),
+        "findings": [
+            {**f.to_dict(), "remediation": remediation.get(f.category)}
+            for f in result.findings
+        ],
     }
-    _write(path, lambda f: json.dump(data, f, ensure_ascii=False, indent=2))
-    log.info(f"JSON 报告已保存: {path}")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    raw(f"{Colors.GREEN}[+] JSON 报告已保存: {path}{Colors.RESET}")
 
 
-# ── CSV [新增] ────────────────────────────────────────────────
+# ---------------------------------------------------------------- CSV
 def save_csv(result: ScanResult, path: str):
-    """[新增] CSV 格式报告，便于导入 Excel / 数据库"""
-    headers = ["时间戳", "严重级别", "类别", "描述", "URL", "证据", "利用结果"]
-    rows = [f.to_csv_row() for f in result.sorted_findings()]
-
-    def _write_csv(f):
-        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-        writer.writerow(headers)
-        writer.writerows(rows)
-
-    _write(path, _write_csv, mode="w", encoding="utf-8-sig")  # utf-8-sig for Excel
-    log.info(f"CSV 报告已保存: {path}")
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["severity", "confidence", "category", "detail", "url",
+                    "evidence", "remediation", "time"])
+        for fd in result.findings:
+            w.writerow([fd.severity, fd.confidence, fd.category, fd.detail,
+                        fd.url, str(fd.evidence)[:300],
+                        remediation.get(fd.category), fd.time])
+    raw(f"{Colors.GREEN}[+] CSV 报告已保存: {path}{Colors.RESET}")
 
 
-# ── HTML ─────────────────────────────────────────────────────
+# ---------------------------------------------------------------- Markdown
+def save_markdown(result: ScanResult, path: str):
+    counts = result.summary()
+    lines = [
+        f"# WebVulnScanner v4.0 扫描报告",
+        "",
+        f"- **目标**: {result.target}",
+        f"- **时间**: {result.start_time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- **耗时**: {result.elapsed()}  |  **请求数**: {result.request_count}",
+        f"- **风险评分**: {result.risk_score()}/100  （{result.risk_grade()}）",
+        f"- **风险分布**: CRITICAL {counts['CRITICAL']} · HIGH {counts['HIGH']} · "
+        f"MEDIUM {counts['MEDIUM']} · LOW {counts['LOW']} · INFO {counts['INFO']}",
+        "",
+    ]
+    for sev in SEV_ORDER:
+        items = result.by_severity(sev)
+        if not items:
+            continue
+        lines.append(f"## {sev} ({len(items)})\n")
+        seen_cat = set()
+        for it in items:
+            conf = f" _{it.confidence}_" if it.confidence != "确认" else ""
+            lines.append(f"### [{it.category}] {it.detail}{conf}")
+            if it.url:
+                lines.append(f"- URL: `{it.url}`")
+            if it.evidence:
+                lines.append(f"- 证据: `{str(it.evidence)[:200]}`")
+            if it.category not in seen_cat:
+                lines.append(f"- 修复建议: {remediation.get(it.category)}")
+                seen_cat.add(it.category)
+            lines.append("")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    raw(f"{Colors.GREEN}[+] Markdown 报告已保存: {path}{Colors.RESET}")
+
+
+# ---------------------------------------------------------------- HTML
+def _e(x) -> str:
+    """HTML 转义（所有动态内容必须经过此函数）。"""
+    return html.escape(str(x), quote=True)
+
+
 def save_html(result: ScanResult, path: str):
     counts = result.summary()
-    sev_color = {
-        "CRITICAL": "#ff2222", "HIGH": "#ff7700",
-        "MEDIUM":   "#ffcc00", "LOW":  "#44aaff", "INFO": "#aaaaaa",
-    }
+    score = result.risk_score()
+    grade = result.risk_grade()
+    gcol = GRADE_COLOR.get(grade, "#8b949e")
 
     # 统计卡片
-    stat_cards = "".join(
-        f'<div class="card" style="border-top:3px solid {sev_color[s]}">'
-        f'<div class="cnt" style="color:{sev_color[s]}">{counts[s]}</div>'
-        f'<div class="lbl">{s}</div></div>'
-        for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
-    )
+    stat_cards = ""
+    for sev in SEV_ORDER:
+        col = SEV_COLOR[sev]
+        stat_cards += (
+            f'<div class="card" style="border-top:3px solid {col}">'
+            f'<div class="cnt" style="color:{col}">{counts[sev]}</div>'
+            f'<div class="lbl">{sev}</div></div>'
+        )
 
-    # 表格行
-    rows = ""
-    for f in result.sorted_findings():
-        col   = sev_color.get(f.severity, "#aaa")
-        xr    = _esc(f.exploit_result[:300]) if f.exploit_result else "-"
-        extra = ""
-        if f.extra:
-            extra = "<br>".join(f"{_esc(k)}: {_esc(str(v)[:200])}"
-                                for k, v in f.extra.items())
-        rows += f"""
-        <tr>
-          <td><span class="badge" style="background:{col}">{_esc(f.severity)}</span></td>
-          <td>{_esc(f.category)}</td>
-          <td>{_esc(f.detail)}</td>
-          <td class="mono">{f'<a href="{_esc(f.url)}" target="_blank">{_esc(f.url)}</a>' if f.url else '-'}</td>
-          <td class="mono small">{_esc(str(f.evidence)[:150]) if f.evidence else '-'}</td>
-          <td class="exploit">{xr}</td>
-          <td class="small">{extra or '-'}</td>
-          <td class="small">{_esc(f.timestamp[:19])}</td>
-        </tr>"""
+    # 按严重程度分组的区块
+    sections = ""
+    for sev in SEV_ORDER:
+        items = result.by_severity(sev)
+        if not items:
+            continue
+        col = SEV_COLOR[sev]
+        rows = ""
+        cat_seen = set()
+        for f in items:
+            conf = "" if f.confidence == "确认" else f' <span class="conf">{_e(f.confidence)}</span>'
+            rem = ""
+            if f.category not in cat_seen:
+                rem = f'<div class="rem">🛠 修复建议：{_e(remediation.get(f.category))}</div>'
+                cat_seen.add(f.category)
+            rows += f"""
+            <tr>
+              <td class="cat">{_e(f.category)}</td>
+              <td>{_e(f.detail)}{conf}
+                  {f'<div class="evi">{_e(str(f.evidence)[:200])}</div>' if f.evidence else ''}
+                  {rem}</td>
+              <td class="mono">{_e(f.url) or '-'}</td>
+            </tr>"""
+        sections += f"""
+        <div class="sev-block">
+          <h2 style="color:{col}">▶ {sev} <span class="count">{len(items)}</span></h2>
+          <table>
+            <thead><tr><th style="width:15%">类别</th><th>描述 / 修复建议</th><th style="width:26%">URL</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>"""
 
-    html = f"""<!DOCTYPE html>
+    if not sections:
+        sections = '<p class="empty">未发现任何问题。</p>'
+
+    # 风险仪表（signature 元素）：环形进度
+    circ = 2 * 3.14159 * 52
+    dash = circ * (score / 100)
+
+    html_doc = f"""<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>扫描报告 — {_esc(result.target)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扫描报告 - {_e(result.target)}</title>
 <style>
-  *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{font-family:'Segoe UI',Arial,sans-serif;background:#0d1117;color:#c9d1d9;font-size:14px}}
-  header{{background:#161b22;padding:20px 32px;border-bottom:1px solid #30363d}}
-  header h1{{color:#58a6ff;font-size:1.5em;margin-bottom:4px}}
-  header p{{color:#8b949e;font-size:.9em}}
-  .stats{{display:flex;gap:12px;padding:20px 32px;flex-wrap:wrap}}
-  .card{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 20px;min-width:100px;text-align:center}}
-  .cnt{{font-size:2em;font-weight:700}}
-  .lbl{{font-size:.75em;color:#8b949e;margin-top:2px}}
-  .section{{padding:0 32px 32px}}
-  .filter-bar{{padding:0 32px 12px;display:flex;gap:8px;flex-wrap:wrap}}
-  .filter-btn{{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:4px 12px;
-               border-radius:4px;cursor:pointer;font-size:.8em}}
-  .filter-btn.active{{background:#58a6ff;color:#000}}
-  table{{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}}
-  th{{background:#21262d;padding:10px 12px;text-align:left;font-size:.8em;color:#8b949e;border-bottom:1px solid #30363d;white-space:nowrap}}
-  td{{padding:8px 12px;border-bottom:1px solid #21262d;font-size:.85em;vertical-align:top}}
-  tr:last-child td{{border-bottom:none}}
-  tr:hover td{{background:#1c2128}}
-  .badge{{padding:2px 8px;border-radius:4px;font-size:.7em;font-weight:700;color:#000;white-space:nowrap}}
-  .mono{{font-family:monospace;font-size:.8em;word-break:break-all}}
-  .small{{font-size:.78em;color:#8b949e}}
-  .exploit{{font-family:monospace;font-size:.8em;color:#7ee787;word-break:break-all}}
-  footer{{text-align:center;padding:20px;color:#484f58;font-size:.8em}}
-  a{{color:#58a6ff;text-decoration:none}}
-  a:hover{{text-decoration:underline}}
-  .hidden{{display:none}}
+  :root {{ --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e; }}
+  * {{ box-sizing:border-box; margin:0; padding:0; }}
+  body {{ font-family:'Segoe UI',system-ui,Arial,sans-serif; background:var(--bg); color:var(--fg); line-height:1.5; }}
+  header {{ background:var(--panel); padding:24px 40px; border-bottom:1px solid var(--border);
+            display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:24px; }}
+  .htext h1 {{ color:#58a6ff; font-size:1.5em; letter-spacing:.5px; }}
+  .htext p {{ color:var(--dim); font-size:.88em; margin-top:6px; }}
+  .htext a {{ color:#58a6ff; text-decoration:none; }}
+  .gauge {{ position:relative; width:132px; height:132px; flex-shrink:0; }}
+  .gauge svg {{ transform:rotate(-90deg); }}
+  .gauge .val {{ position:absolute; inset:0; display:flex; flex-direction:column;
+                 align-items:center; justify-content:center; }}
+  .gauge .num {{ font-size:2em; font-weight:800; color:{gcol}; }}
+  .gauge .grd {{ font-size:.8em; color:var(--dim); margin-top:2px; }}
+  .stats {{ display:flex; gap:16px; padding:24px 40px; flex-wrap:wrap; }}
+  .card {{ background:var(--panel); border:1px solid var(--border); border-radius:8px;
+           padding:14px 22px; min-width:104px; text-align:center; }}
+  .cnt {{ font-size:1.9em; font-weight:700; }}
+  .lbl {{ font-size:.78em; color:var(--dim); margin-top:2px; letter-spacing:1px; }}
+  main {{ padding:0 40px 48px; }}
+  .sev-block {{ margin-bottom:34px; }}
+  .sev-block h2 {{ font-size:1.05em; margin-bottom:12px; letter-spacing:.5px; }}
+  .sev-block h2 .count {{ color:var(--dim); font-size:.8em; font-weight:400; }}
+  table {{ width:100%; border-collapse:collapse; background:var(--panel);
+           border:1px solid var(--border); border-radius:8px; overflow:hidden; }}
+  th {{ background:#21262d; padding:11px 16px; text-align:left; font-size:.82em;
+        color:var(--dim); border-bottom:1px solid var(--border); font-weight:600; }}
+  td {{ padding:12px 16px; border-bottom:1px solid #21262d; font-size:.9em; vertical-align:top; }}
+  tr:last-child td {{ border-bottom:none; }}
+  tr:hover td {{ background:#1c2128; }}
+  .cat {{ color:#79c0ff; font-weight:600; white-space:nowrap; }}
+  .conf {{ font-size:.75em; color:#d29922; border:1px solid #d29922; border-radius:4px;
+           padding:0 5px; margin-left:6px; }}
+  .evi {{ font-family:ui-monospace,Consolas,monospace; font-size:.8em; color:var(--dim);
+          margin-top:6px; word-break:break-all; background:#0d1117; padding:6px 8px;
+          border-radius:5px; border:1px solid var(--border); }}
+  .rem {{ margin-top:8px; font-size:.84em; color:#3fb950; border-left:2px solid #3fb950;
+          padding-left:10px; }}
+  .mono {{ font-family:ui-monospace,Consolas,monospace; font-size:.82em; word-break:break-all; color:var(--dim); }}
+  .empty {{ padding:40px; text-align:center; color:var(--dim); }}
+  footer {{ text-align:center; padding:24px; color:#484f58; font-size:.8em; border-top:1px solid var(--border); }}
+  footer a {{ color:#58a6ff; text-decoration:none; }}
+  @media (max-width:640px) {{ header,.stats,main {{ padding-left:18px; padding-right:18px; }} }}
 </style>
 </head>
 <body>
 <header>
-  <h1>🔍 WebVulnScanner v7.0 — 扫描报告</h1>
-  <p>目标: <strong>{_esc(result.target)}</strong> &nbsp;|&nbsp;
-     时间: {result.start_time.strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp;
-     耗时: {result.elapsed()} &nbsp;|&nbsp;
-     作者: <a href="https://github.com/huocai250" target="_blank">火柴 @huocai250</a></p>
+  <div class="htext">
+    <h1>🔍 WebVulnScanner v4.0 — 扫描报告</h1>
+    <p>目标: <strong>{_e(result.target)}</strong> &nbsp;|&nbsp;
+       时间: {result.start_time.strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp;
+       耗时: {result.elapsed()} &nbsp;|&nbsp; 请求: {result.request_count} &nbsp;|&nbsp;
+       作者: <a href="https://github.com/huocai250" target="_blank" rel="noopener">火柴 @huocai250</a></p>
+  </div>
+  <div class="gauge">
+    <svg width="132" height="132">
+      <circle cx="66" cy="66" r="52" fill="none" stroke="#21262d" stroke-width="10"/>
+      <circle cx="66" cy="66" r="52" fill="none" stroke="{gcol}" stroke-width="10"
+              stroke-linecap="round" stroke-dasharray="{dash:.1f} {circ:.1f}"/>
+    </svg>
+    <div class="val"><span class="num">{score}</span><span class="grd">{grade} · /100</span></div>
+  </div>
 </header>
 <div class="stats">{stat_cards}</div>
-<div class="filter-bar">
-  <span style="color:#8b949e;font-size:.85em;line-height:28px">筛选:</span>
-  {''.join(f'<button class="filter-btn active" onclick="toggleFilter(this,\'{s}\')">{s}</button>'
-           for s in ["CRITICAL","HIGH","MEDIUM","LOW","INFO"])}
-</div>
-<div class="section">
-  <table id="main-table">
-    <thead><tr>
-      <th>等级</th><th>类别</th><th>描述</th><th>URL</th>
-      <th>证据</th><th>利用结果</th><th>额外信息</th><th>时间</th>
-    </tr></thead>
-    <tbody>{rows or "<tr><td colspan='8' style='text-align:center;color:#8b949e;padding:32px'>未发现漏洞</td></tr>"}</tbody>
-  </table>
-</div>
-<footer>
-  WebVulnScanner v7.0 &nbsp;·&nbsp; 作者: 火柴 &nbsp;·&nbsp;
-  <a href="https://github.com/huocai250">GitHub: huocai250</a>
-</footer>
-<script>
-function toggleFilter(btn, sev) {{
-  btn.classList.toggle('active');
-  const active = [...document.querySelectorAll('.filter-btn.active')].map(b => b.textContent);
-  document.querySelectorAll('#main-table tbody tr').forEach(row => {{
-    const badge = row.querySelector('.badge');
-    if (!badge) return;
-    row.classList.toggle('hidden', !active.includes(badge.textContent));
-  }});
-}}
-</script>
+<main>{sections}</main>
+<footer>Generated by WebVulnScanner v4.0 · Author: 火柴 ·
+  <a href="https://github.com/huocai250">GitHub</a> ·
+  仅供授权渗透测试与安全研究使用</footer>
 </body>
 </html>"""
-
-    _write(path, lambda f: f.write(html))
-    log.info(f"HTML 报告已保存: {path}")
-
-
-def _write(path: str, writer_fn, mode: str = "w", encoding: str = "utf-8"):
-    """[优化] 统一文件写入，含异常处理"""
-    try:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, mode, encoding=encoding) as f:
-            writer_fn(f)
-    except OSError as e:
-        log.error(f"无法写入报告 {path}: {e}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html_doc)
+    raw(f"{Colors.GREEN}[+] HTML 报告已保存: {path}{Colors.RESET}")

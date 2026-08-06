@@ -1,34 +1,31 @@
 """
-XSS 检测模块 — WebVulnScanner v6.0
+XSS 检测模块（反射型 / SSTI / DOM 分析）
 Author: 火柴 | GitHub: huocai250
-
-[优化] 集成 XSSExploiter 自动利用
-[优化] 统一使用 logging
+v4.0: 测试真实注入点 + 并发；使用唯一标记降低误报
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
 import re
-from utils.http import extract_forms
 from core.scanner import BaseScanner
+from core.colors import log
+from utils.http import build_url
 
+# 用唯一标记包裹，避免把页面里本就存在的 alert(1) 误判
+MARK = "xss8931"
 
 REFLECTED_PAYLOADS = [
-    '<script>alert(1)</script>',
-    '"><script>alert(1)</script>',
-    "'><script>alert(1)</script>",
-    '<img src=x onerror=alert(1)>',
-    '"><img src=x onerror=alert(1)>',
-    '<svg onload=alert(1)>',
-    '<body onload=alert(1)>',
-    '<details open ontoggle=alert(1)>',
-    '<input autofocus onfocus=alert(1)>',
+    f'<script>alert("{MARK}")</script>',
+    f'"><script>alert("{MARK}")</script>',
+    f"'><script>alert(\"{MARK}\")</script>",
+    f'<img src=x onerror=alert("{MARK}")>',
+    f'"><svg/onload=alert("{MARK}")>',
+    f'<details open ontoggle=alert("{MARK}")>',
 ]
 
 SSTI_PAYLOADS = {
-    "{{7*7}}": "49", "${7*7}": "49",
-    "#{7*7}":  "49", "{{7*'7'}}": "7777777",
+    "{{7*7}}":    "49",       # Jinja2 / Twig
+    "${7*7}":     "49",       # FreeMarker / Thymeleaf
+    "#{7*7}":     "49",       # Ruby ERB / Slim
+    "<%= 7*7 %>": "49",       # EJS / ERB
+    "{{7*'7'}}":  "7777777",  # Jinja2
 }
 
 DOM_INDICATORS = [
@@ -44,91 +41,57 @@ COMMON_PARAMS = ["q", "search", "keyword", "name", "input", "value",
 
 
 class XSSScanner(BaseScanner):
+    name = "xss"
+
     def run(self):
-        _before = self.result.total()
-        log.info("XSS 检测（反射型 / SSTI / DOM 分析）...")
-        r = self.get(self.target)
-        if not r:
+        log("INFO", "XSS 检测（反射型 / SSTI / DOM，并发）...")
+        base = self.baseline()
+        if base:
+            self._check_dom(base.text)
+
+        targets = self.injection_targets(COMMON_PARAMS)
+        if not targets:
+            log("SKIP", "无可测试参数")
             return
-        self._test_reflected(COMMON_PARAMS)
-        self._test_ssti(COMMON_PARAMS)
-        self._check_dom(r.text)
-        for i, form in enumerate(extract_forms(r.text)):
-            self._test_form_xss(form, i)
-        self._log_module_done("XSS", _before)
+        log("INFO", f"共 {len(targets)} 个参数点待测")
+        self.map(self._test_param, targets)
 
-    def _test_reflected(self, params):
-        for param in params:
-            for payload in REFLECTED_PAYLOADS:
-                r = self.get(self.target, params={param: payload})
-                if r and payload in r.text and not self._is_encoded(payload, r.text):
-                    log.warning(f"[VULN][反射型XSS] 参数: {param}")
-                    exploit_result = ""
-                    if self.exploit_mode:
-                        exploit_result = self._run_exploit(self.target, param, "GET", {param: "test"})
-                    self.result.add("XSS", "HIGH",
-                                    f"[反射型XSS] 参数 '{param}' 未过滤直接输出",
-                                    f"Payload: {payload}", url=self.target,
-                                    exploit_result=exploit_result)
-                    break
+    def _req(self, method, url, params):
+        if method == "POST":
+            return self.post(url, data=params)
+        return self.get(build_url(url, params))
 
-    def _test_ssti(self, params):
-        for param in params:
-            for payload, expected in SSTI_PAYLOADS.items():
-                r = self.get(self.target, params={param: payload})
-                if r and expected in r.text:
-                    log.warning(f"[VULN][SSTI] 参数: {param} → 输出 {expected}")
-                    self.result.add("SSTI", "CRITICAL",
-                                    f"[模板注入] 参数 '{param}' 存在 SSTI",
-                                    f"Payload: {payload} → {expected}",
-                                    url=self.target)
-                    return
-
-    def _test_form_xss(self, form, idx):
-        action = form["action"] or self.target
-        if not action.startswith("http"):
-            action = self.build_url(action)
-        for param in form["inputs"]:
-            for payload in REFLECTED_PAYLOADS[:4]:
-                data = form["inputs"].copy()
-                data[param] = payload
-                r = (self.post(action, data=data) if form["method"] == "POST"
-                     else self.get(action, params=data))
-                if r and payload in r.text and not self._is_encoded(payload, r.text):
-                    log.warning(f"[VULN][XSS] 表单#{idx} 参数: {param}")
-                    exploit_result = ""
-                    if self.exploit_mode:
-                        exploit_result = self._run_exploit(action, param,
-                                                          form["method"], form["inputs"])
-                    self.result.add("XSS", "HIGH",
-                                    f"[XSS] 表单#{idx} 参数 '{param}'",
-                                    f"Payload: {payload}", url=action,
-                                    exploit_result=exploit_result)
-                    break
+    def _test_param(self, target):
+        url, method, params, pname = target
+        # 反射型
+        for payload in REFLECTED_PAYLOADS:
+            test = dict(params); test[pname] = payload
+            r = self._req(method, url, test)
+            if r and payload in r.text and not self._is_encoded(payload, r.text):
+                log("VULN", f"[反射型XSS] 参数: {pname} | {payload[:40]}")
+                self.add("XSS", "HIGH",
+                         f"[反射型XSS] 参数 '{pname}' 未过滤直接输出",
+                         f"Payload: {payload} @ {url}", url=url)
+                break
+        # SSTI
+        for payload, expected in SSTI_PAYLOADS.items():
+            test = dict(params); test[pname] = payload
+            r = self._req(method, url, test)
+            if r and expected in r.text and payload not in r.text:
+                log("VULN", f"[SSTI] 参数: {pname} | {payload}→{expected}")
+                self.add("SSTI", "CRITICAL",
+                         f"[模板注入] 参数 '{pname}' 存在服务端模板注入",
+                         f"Payload: {payload} 输出: {expected} @ {url}", url=url)
+                return f"ssti:{pname}@{url}"
+        return None
 
     def _check_dom(self, html):
         found = [i for i in DOM_INDICATORS if i in html]
         if len(found) >= 2:
-            log.warning(f"[VULN][DOM XSS] 风险点: {', '.join(found[:4])}")
-            self.result.add("XSS", "LOW",
-                            f"DOM XSS 风险: {', '.join(found[:4])}",
-                            url=self.target)
-
-    def _run_exploit(self, url, param, method, base_params) -> str:
-        try:
-            from modules.exploit.xss_exploit import XSSExploiter
-            exploiter = XSSExploiter(self)
-            info = exploiter.exploit(url, param, method, base_params)
-            lines = [f"PoC URL: {info.get('poc_url','N/A')[:120]}"]
-            if info.get("confirmed_payload"):
-                lines.append(f"确认Payload: {info['confirmed_payload'][:80]}")
-            if info.get("cookie_steal_payload"):
-                lines.append(f"Cookie窃取: {info['cookie_steal_payload'][:100]}")
-            lines.append(f"HttpOnly: {info.get('httponly', 'unknown')}")
-            return "\n".join(lines)
-        except Exception as e:
-            log.debug(f"XSS 利用异常: {e}")
-            return f"利用失败: {e}"
+            log("WARN", f"页面存在 DOM XSS 风险点: {', '.join(found[:4])}")
+            self.add("XSS", "LOW",
+                     f"页面存在可能的 DOM XSS 风险: {', '.join(found[:4])}",
+                     url=self.target, confidence="疑似")
 
     def _is_encoded(self, payload, text):
         encoded = payload.replace("<", "&lt;").replace(">", "&gt;")

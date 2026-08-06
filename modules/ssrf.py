@@ -1,101 +1,73 @@
 """
-SSRF（服务端请求伪造）检测模块
+SSRF（服务端请求伪造）检测模块（主动 / 检测导向）
 Author: 火柴 | GitHub: huocai250
 
-修复:
-- 移除 requests 不支持的 gopher/dict 协议 payload（永远失败）
-- 改用有效的 HTTP/HTTPS payload
+向可能触发服务端请求的参数注入一个**你控制的 canary URL**，若服务端确实
+发起了对 canary 的请求（需配合带外 collaborator 观测），即存在 SSRF。
+带内层面，本模块通过响应差异/错误特征给出「疑似」提示。
+
+安全边界：本模块**只做检测** —— 判断服务端是否会向外部地址发起请求。
+它**不读取云元数据(169.254.169.254)、不探测内网、不读取本地文件**。
+这些属于利用行为，本工具不实现。请将 canary 配置为你自己的 collaborator。
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import re
 from core.scanner import BaseScanner
+from core.colors import log
+from utils.http import build_url
 
-SSRF_PARAMS = [
-    "url", "uri", "path", "src", "dest", "target", "link",
-    "redirect", "img", "image", "file", "page", "fetch",
-    "proxy", "host", "endpoint", "callback", "load", "resource",
-    "from", "to", "domain", "webhook", "next", "data",
-]
+# 常见会触发服务端取 URL 的参数名
+SSRF_PARAMS = ["url", "uri", "link", "src", "source", "dest", "redirect",
+               "image", "img", "load", "fetch", "site", "domain", "callback",
+               "webhook", "feed", "host", "path", "proxy", "target"]
 
-SSRF_PAYLOADS = [
-    # 内网 / 回环
-    "http://127.0.0.1/",
-    "http://127.0.0.1:22/",
-    "http://127.0.0.1:3306/",
-    "http://127.0.0.1:6379/",
-    "http://127.0.0.1:8080/",
-    "http://0.0.0.0/",
-    "http://localhost/",
-    "http://[::1]/",
-    # 十进制 / 八进制绕过（仍是合法 HTTP URL）
-    "http://2130706433/",           # 127.0.0.1 十进制
-    "http://0177.0.0.1/",           # 127.0.0.1 八进制
-    "http://127.000.000.001/",
-    # 云元数据
-    "http://169.254.169.254/",
-    "http://169.254.169.254/latest/meta-data/",
-    "http://metadata.google.internal/computeMetadata/v1/",
-    "http://100.100.100.200/latest/meta-data/",
-    # 内网段
-    "http://192.168.0.1/",
-    "http://10.0.0.1/",
-    "http://172.16.0.1/",
-    # file:// 协议（requests 不支持但服务端可能支持）
-    "file:///etc/passwd",
-    "file:///C:/windows/win.ini",
-]
-
-SSRF_SIGNATURES = [
-    r"root:.*:0:0:",
-    r"ami-id", r"instance-id", r"local-ipv4",
-    r"computeMetadata",
-    r"\+PONG",                 # Redis PONG
-    r"SSH-2\.0",              # SSH banner
-    r"220.*FTP",              # FTP banner
-    r"mysql_native_password", # MySQL banner
-    r"HTTP/1\.[01] [0-9]",   # 内网 HTTP 响应
+# 带内报错特征（很多 SSRF 尝试连接失败会回显）
+ERROR_SIGNS = [
+    r"Connection refused", r"Failed to connect", r"Name or service not known",
+    r"getaddrinfo", r"couldn't connect to host", r"cURL error",
+    r"UnknownHostException", r"No route to host", r"timed out",
 ]
 
 
 class SSRFScanner(BaseScanner):
-    def run(self):
-        _before = self.result.total()
-        log.info( "SSRF 检测...")
-        found = False
-        for param in SSRF_PARAMS:
-            if found:
-                break
-            for payload in SSRF_PAYLOADS:
-                r = self.get(self.target, params={param: payload})
-                if r and self._has_ssrf(r.text):
-                    log.warning(f"[VULN][SSRF] 参数: {param} → {payload[:50]}")
-                    exploit_result = ""
-                    if self.exploit_mode:
-                        try:
-                            from modules.exploit.ssrf_exploit import SSRFExploiter
-                            info = SSRFExploiter(self).exploit(
-                                self.target, param, "GET", {param: "1"})
-                            parts = []
-                            for k, v in info.get("cloud_metadata", {}).items():
-                                parts.append(f"云元数据[{k}]: {str(v)[:100]}")
-                            for svc in info.get("internal_services", []):
-                                parts.append(f"内网服务: {svc}")
-                            exploit_result = "\n".join(parts)
-                        except Exception as e:
-                            exploit_result = f"利用失败: {e}"
-                    self.result.add("SSRF", "CRITICAL",
-                                    f"参数 '{param}' 存在 SSRF 漏洞",
-                                    f"Payload: {payload}", url=self.target,
-                                    exploit_result=exploit_result)
-                    found = True
-                    break
-        if not found:
-            log.info( "SSRF 检测完成，未发现明显漏洞")
-        self._log_module_done("SSRF", _before)
+    name = "ssrf"
+    passive = False
 
-    def _has_ssrf(self, text: str) -> bool:
-        return any(re.search(p, text, re.I) for p in SSRF_SIGNATURES)
+    def run(self):
+        canary = self.config.canary
+        log("INFO", f"SSRF 检测（canary={canary}，带外确认需自建 collaborator）...")
+        targets = self.injection_targets(common_params=SSRF_PARAMS)
+        self.map(self._test, targets)
+
+    def _test(self, target):
+        url, method, params, pname = target
+        canary = self.config.canary
+        # 只对「看起来像 URL/主机」的参数或常见 SSRF 参数名注入
+        probes = [f"http://{canary}/wvsssrf", f"https://{canary}/wvsssrf",
+                  f"//{canary}/wvsssrf"]
+        for probe in probes:
+            test = dict(params)
+            test[pname] = probe
+            if method == "POST":
+                r = self.post(url, data=test)
+            else:
+                r = self.get(build_url(url, test))
+            if not r:
+                continue
+            body = r.text or ""
+            # 带内提示：canary 出现在响应里，或返回连接类错误
+            if canary in body:
+                log("VULN", f"[SSRF-疑似] 参数: {pname}（响应回显 canary）")
+                self.add("SSRF", "MEDIUM",
+                         f"参数 '{pname}' 疑似 SSRF（响应回显了注入的外部地址）",
+                         evidence=f"probe={probe} @ {url}", url=url,
+                         confidence="疑似")
+                return f"{pname}@{url}"
+            for sign in ERROR_SIGNS:
+                if re.search(sign, body, re.I):
+                    log("VULN", f"[SSRF-疑似] 参数: {pname}（服务端连接错误）")
+                    self.add("SSRF", "LOW",
+                             f"参数 '{pname}' 可能触发服务端请求（返回连接错误，需带外确认）",
+                             evidence=f"probe={probe} 触发 '{sign}' @ {url}",
+                             url=url, confidence="疑似")
+                    return f"{pname}@{url}"
+        return None

@@ -1,20 +1,12 @@
 """
 目录与文件枚举模块
 Author: 火柴 | GitHub: huocai250
-
-修复:
-- _soft404_len 从构造函数移到 run()，避免构造期网络失败导致永久失效
-- future.result() 包裹 try-except，防止线程异常传播崩溃主程序
-- 软404采样改为3次取平均，更稳定
+v4.0: 适配新基类；用基线 404 长度过滤软 404（wildcard 响应）
 """
-import logging
-from core.logger import C as Colors
-log = logging.getLogger("webscan")
-
-
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.scanner import BaseScanner
+from core.colors import log, Colors
+
 
 BUILTIN_WORDLIST = [
     "admin", "administrator", "admin.php", "admin.html", "admin/login",
@@ -25,12 +17,13 @@ BUILTIN_WORDLIST = [
     "api-docs", "openapi.json", "openapi.yaml", "redoc",
     ".git", ".git/HEAD", ".git/config", ".git/index",
     ".env", ".env.local", ".env.production", ".env.backup",
-    ".htaccess", ".htpasswd", ".bash_history",
+    ".htaccess", ".htpasswd", ".bash_history", ".ssh/id_rsa",
     "web.config", "app.config", "config.php", "config.json",
     "configuration.php", "settings.py", "settings.php",
     "database.yml", "db.php", "database.php",
-    "composer.json", "package.json", "yarn.lock",
-    "phpinfo.php", "info.php", "test.php", "debug.php",
+    "composer.json", "package.json", "yarn.lock", "Gemfile",
+    "phpinfo.php", "info.php", "test.php", "debug.php", "phptest.php",
+    "php.php", "eval.php", "shell.php", "cmd.php", "exec.php",
     "readme.md", "README.md", "README.txt", "CHANGELOG.md",
     "LICENSE", "INSTALL.md", "SECURITY.md",
     "backup", "backup.zip", "backup.tar.gz", "backup.sql",
@@ -39,111 +32,81 @@ BUILTIN_WORDLIST = [
     "upload", "uploads", "files", "file", "media", "images",
     "img", "static", "assets", "resources",
     "logs", "log", "error.log", "access.log", "debug.log",
+    "application.log", "server.log", "php_error.log",
     "wp-admin", "wp-login.php", "wp-config.php", "xmlrpc.php",
-    "wp-content/debug.log", "administrator",
-    "phpmyadmin", "pma", "myadmin", "adminer.php", "adminer",
+    "wp-content/debug.log",
+    "phpmyadmin", "pma", "myadmin", "mysql", "mysqladmin",
+    "adminer.php", "adminer",
     "actuator", "actuator/env", "actuator/health", "actuator/mappings",
-    "actuator/trace", "actuator/dump", "actuator/beans",
-    "health", "status", "metrics", "server-status",
+    "actuator/trace", "actuator/dump", "actuator/beans", "actuator/metrics",
+    "health", "status", "metrics", "monitor", "ping",
+    "server-status", "server-info",
     ".well-known/security.txt", "security.txt",
-    "console", "terminal", "cgi-bin",
+    "console", "terminal", "webshell",
+    "cgi-bin", "cgi-bin/admin.cgi",
     "login", "signin", "logout", "register", "signup",
-    "robots.txt", "sitemap.xml", ".DS_Store", "crossdomain.xml",
+    "forgot-password", "reset-password",
+    "robots.txt", "sitemap.xml", ".DS_Store",
+    "crossdomain.xml", "clientaccesspolicy.xml",
 ]
 
-HIGH_RISK = {
+HIGH_RISK_PATHS = {
     ".git", ".env", "phpinfo", "shell", "cmd", "exec", "eval",
     "webshell", "backup.sql", "database.sql", "dump.sql",
-    ".htpasswd", ".bash_history", "actuator",
-    "web.config", "config.php", "settings.py",
+    ".htpasswd", ".bash_history", ".ssh", "id_rsa",
+    "actuator", "web.config", "config.php", "settings.py",
 }
-
-SOFT_404_SIGS = [
-    "page not found", "404", "not found", "does not exist",
-    "页面不存在", "找不到页面", "no encontrado",
-]
 
 
 class DirBuster(BaseScanner):
-    def __init__(
-        self,
-        target: str,
-        result,
-        wordlist_file: str = None,
-        **kwargs,
-    ):
-        super().__init__(target, result, **kwargs)
-        self.wordlist       = self._load_wordlist(wordlist_file)
-        self._soft404_len   = -1   # 修复：延迟到 run() 采样
+    name = "dirbust"
+    passive = False   # 会对大量路径发起请求
 
-    def _load_wordlist(self, path: str) -> list:
-        if path and os.path.isfile(path):
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self.wordlist = self._load_wordlist(self.config.wordlist_file)
+        self._soft404_len = None
+
+    def _load_wordlist(self, path):
+        if path and os.path.exists(path):
             with open(path, encoding="utf-8", errors="ignore") as f:
-                custom = [l.strip() for l in f
-                          if l.strip() and not l.startswith("#")]
-            log.info( f"自定义字典: {len(custom)} 条 + 内置 {len(BUILTIN_WORDLIST)} 条")
-            return list(dict.fromkeys(BUILTIN_WORDLIST + custom))
+                custom = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+            log("OK", f"加载自定义字典: {len(custom)} 条")
+            return sorted(set(BUILTIN_WORDLIST + custom))
         return BUILTIN_WORDLIST
 
-    def _sample_soft404(self) -> int:
-        """修复：在 run() 里采样，避免构造期失败导致永久失效"""
-        lengths = []
-        for suffix in ["__ws_nx_1__", "__ws_nx_2__", "__ws_nx_3__"]:
-            r = self.get(self.build_url(suffix))
-            if r:
-                lengths.append(len(r.text))
-        return int(sum(lengths) / len(lengths)) if lengths else 0
-
     def run(self):
-        _before = self.result.total()
-        # 修复：在 run() 里采样软404基准
-        self._soft404_len = self._sample_soft404()
-        log.info( f"目录枚举 ({len(self.wordlist)} 条, {self.threads} 线程, "
-            f"软404基准={self._soft404_len}b)...")
+        log("INFO", f"目录枚举 ({len(self.wordlist)} 条字典，{self.threads} 线程)...")
+        self._calibrate_soft404()
+        found = self.map(self._check, self.wordlist)
+        log("OK", f"目录枚举完成，发现 {len(found)} 个可访问路径")
 
-        found = []
-        with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            futures = {executor.submit(self._check, p): p for p in self.wordlist}
-            for future in as_completed(futures):
-                try:
-                    res = future.result()   # 修复：捕获线程异常
-                    if res:
-                        found.append(res)
-                except Exception:
-                    pass
+    def _calibrate_soft404(self):
+        """请求一个几乎必然不存在的路径，记录其响应长度，用于识别软 404。"""
+        r = self.get(self.url("this_should_not_exist_" + "zzq19x"))
+        if r is not None and r.status_code == 200:
+            self._soft404_len = len(r.text)
+            log("INFO", f"检测到软 404（200 长度 {self._soft404_len}），将据此过滤")
 
-        log.info( f"目录枚举完成，发现 {len(found)} 个路径")
-        self._log_module_done("目录枚举", _before)
-
-    def _check(self, path: str):
-        url = self.build_url(path)
-        r   = self.get(url, allow_redirects=False)
-        if not r or r.status_code not in [200, 301, 302, 401, 403]:
+    def _check(self, path):
+        url = self.url(path)
+        r = self.get(url, allow_redirects=False)
+        if not r or r.status_code not in (200, 301, 302, 401, 403):
+            return None
+        # 过滤软 404
+        if (r.status_code == 200 and self._soft404_len is not None
+                and abs(len(r.text) - self._soft404_len) < 30):
             return None
 
-        # 软404过滤
-        if r.status_code == 200 and self._soft404_len > 0:
-            if abs(len(r.text) - self._soft404_len) < 50:
-                return None
-            tl = r.text.lower()
-            if any(s in tl for s in SOFT_404_SIGS) and len(r.text) < 5000:
-                return None
+        is_high = any(h in path.lower() for h in HIGH_RISK_PATHS)
+        severity = "HIGH" if (r.status_code == 200 and is_high) else \
+                   "MEDIUM" if r.status_code == 200 else "LOW"
 
-        is_high  = any(h in path.lower() for h in HIGH_RISK)
-        severity = ("HIGH"   if r.status_code == 200 and is_high else
-                    "MEDIUM" if r.status_code == 200 else "LOW")
+        label = {200: "可访问", 301: "重定向", 302: "重定向",
+                 401: "需认证", 403: "禁止访问"}.get(r.status_code, str(r.status_code))
 
-        label    = {200: "可访问", 301: "→", 302: "→",
-                    401: "需认证", 403: "禁止"}.get(r.status_code, str(r.status_code))
-        redir    = r.headers.get("Location", "")
-        color    = Colors.RED if severity == "HIGH" else Colors.YELLOW
-
-        msg = f"[{r.status_code} {label}] {color}{url}{Colors.RESET}" + (f" {redir}" if redir else "")
-        if severity == "HIGH":
-            log.warning(f"[VULN] {msg}")
-        else:
-            log.warning(msg)
-
-        detail = f"[{r.status_code}] {label}: /{path}" + (f" {redir}" if redir else "")
-        self.result.add("目录枚举", severity, detail, url=url)
+        icon = "VULN" if severity == "HIGH" else "WARN"
+        color = Colors.RED if severity == "HIGH" else Colors.YELLOW
+        log(icon, f"[{r.status_code} {label}] {color}{url}{Colors.RESET}")
+        self.add("目录枚举", severity, f"[{r.status_code}] {label}: {path}", url=url)
         return url
