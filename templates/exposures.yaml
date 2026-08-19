@@ -1,0 +1,156 @@
+id: git-config-exposure
+info:
+  name: Git 配置文件暴露 (.git/config)
+  severity: medium
+  category: 敏感信息泄露
+requests:
+  - path: /.git/config
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["[core]", "repositoryformatversion"]
+        condition: or
+---
+id: git-head-exposure
+info:
+  name: Git HEAD 暴露 (.git/HEAD)
+  severity: medium
+  category: 敏感信息泄露
+requests:
+  - path: /.git/HEAD
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["ref: refs/"]
+---
+id: svn-entries-exposure
+info:
+  name: SVN entries 暴露 (.svn/entries)
+  severity: medium
+  category: 敏感信息泄露
+requests:
+  - path: /.svn/entries
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: regex
+        regex: ["^\\d+", "svn"]
+        condition: or
+---
+id: env-file-exposure
+info:
+  name: .env 环境配置暴露
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - path: /.env
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: regex
+        regex: ["(DB_|APP_|AWS_|SECRET|API_KEY|PASSWORD)[A-Z_]*\\s*="]
+---
+id: dockerfile-exposure
+info:
+  name: Dockerfile 暴露
+  severity: low
+  category: 信息泄露
+requests:
+  - path: /Dockerfile
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["FROM ", "RUN ", "COPY "]
+        condition: or
+---
+id: docker-compose-exposure
+info:
+  name: docker-compose.yml 暴露
+  severity: medium
+  category: 敏感信息泄露
+requests:
+  - path: /docker-compose.yml
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["services:", "image:", "version:"]
+        condition: or
+---
+id: ds-store-exposure
+info:
+  name: macOS .DS_Store 暴露
+  severity: low
+  category: 敏感信息泄露
+requests:
+  - path: /.DS_Store
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: all
+        words: ["Bud1", "\u0000\u0000\u0000\u0001"]
+        condition: or
+---
+id: backup-sql-exposure
+info:
+  name: 数据库备份文件暴露 (backup.sql/dump.sql)
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /backup.sql
+      - /dump.sql
+      - /database.sql
+      - /db.sql
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["INSERT INTO", "CREATE TABLE", "DROP TABLE"]
+        condition: or
+---
+id: htaccess-exposure
+info:
+  name: .htaccess 暴露
+  severity: low
+  category: 信息泄露
+requests:
+  - path: /.htaccess
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["RewriteEngine", "AuthType", "Order ", "Deny "]
+        condition: or
+---
+id: wp-config-backup
+info:
+  name: WordPress wp-config 备份暴露
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /wp-config.php.bak
+      - /wp-config.php~
+      - /wp-config.php.save
+      - /wp-config.php.old
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["DB_PASSWORD", "DB_NAME", "DB_USER"]
+        condition: or

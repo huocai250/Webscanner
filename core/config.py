@@ -66,6 +66,9 @@ class ScanConfig:
     # 插件目录（热加载自定义模块）
     plugins_dir: str | None = None
 
+    # 额外模板目录（在内置 templates/ 之外追加 YAML 签名）
+    templates_dir: str | None = None
+
     # 输出
     json_out: str | None = None
     html_out: str | None = None

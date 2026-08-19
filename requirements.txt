@@ -1,5 +1,6 @@
 requests>=2.31.0
 urllib3>=2.0.0
+PyYAML>=6.0            # YAML 模板签名库（modules/nuclei.py）；缺失则模板功能降级跳过
 
 # 可选 —— Web UI（python main.py --web）需要：
 #   pip install flask

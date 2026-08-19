@@ -1,0 +1,161 @@
+id: phpmyadmin-panel
+info:
+  name: phpMyAdmin 管理面板暴露
+  severity: medium
+  category: 配置错误
+requests:
+  - paths:
+      - /phpmyadmin/
+      - /pma/
+      - /phpMyAdmin/
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["phpMyAdmin", "pma_"]
+        condition: or
+---
+id: adminer-panel
+info:
+  name: Adminer 数据库面板暴露
+  severity: medium
+  category: 配置错误
+requests:
+  - paths:
+      - /adminer.php
+      - /adminer/
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Adminer", "Login - Adminer"]
+        condition: or
+---
+id: jenkins-panel
+info:
+  name: Jenkins 面板暴露
+  severity: high
+  category: 配置错误
+requests:
+  - path: /
+    matchers-condition: or
+    matchers:
+      - type: header
+        headers: ["X-Jenkins"]
+      - type: word
+        words: ["Dashboard [Jenkins]", "jenkins-session"]
+        condition: or
+---
+id: grafana-panel
+info:
+  name: Grafana 面板暴露
+  severity: medium
+  category: 配置错误
+requests:
+  - path: /login
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["grafana", "Grafana"]
+        condition: or
+---
+id: kibana-panel
+info:
+  name: Kibana 面板暴露
+  severity: medium
+  category: 配置错误
+requests:
+  - paths:
+      - /app/kibana
+      - /api/status
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["kbn-name", "kibana"]
+        condition: or
+---
+id: swagger-ui
+info:
+  name: Swagger UI / API 文档暴露
+  severity: low
+  category: 信息泄露
+requests:
+  - paths:
+      - /swagger-ui.html
+      - /swagger/index.html
+      - /api-docs
+      - /swagger.json
+      - /openapi.json
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["swagger", "openapi", "Swagger UI"]
+        condition: or
+---
+id: gitlab-panel
+info:
+  name: GitLab 实例暴露
+  severity: info
+  category: 信息泄露
+requests:
+  - path: /users/sign_in
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["GitLab", "gitlab"]
+        condition: or
+---
+id: solr-admin
+info:
+  name: Apache Solr 管理界面暴露
+  severity: high
+  category: 配置错误
+requests:
+  - path: /solr/
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Solr Admin", "solr"]
+        condition: or
+---
+id: elasticsearch-exposed
+info:
+  name: Elasticsearch 未授权访问
+  severity: high
+  category: 配置错误
+requests:
+  - path: /_cat/indices
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["green ", "yellow ", "health status index"]
+        condition: or
+  - path: /
+    matchers-condition: and
+    matchers:
+      - type: word
+        words: ["\"cluster_name\"", "\"lucene_version\""]
+        condition: and
+---
+id: prometheus-metrics
+info:
+  name: Prometheus /metrics 暴露
+  severity: low
+  category: 信息泄露
+requests:
+  - path: /metrics
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["# HELP", "# TYPE"]
+        condition: and

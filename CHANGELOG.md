@@ -1,5 +1,43 @@
 # 更新日志
 
+## v9.0.0
+
+### ✨ 模板签名引擎（核心新增）
+- **YAML 模板引擎** `core/template_engine.py` + `modules/nuclei.py`：nuclei 风格的
+  声明式签名库，支持 status/word/regex/header 匹配器与 and/or 组合、多路径、
+  负向匹配。内置 `templates/`（exposures/panels/cves 等）并支持 `--templates DIR`
+  追加。**新增检测无需改代码**，只需新增 YAML 文件。引擎不执行模板中的任何代码。
+
+### ✨ 新增检测模块（10+）
+- **敏感路径暴露** `modules/exposure.py` + `core/data/exposures.py`：600+ 条公开已知
+  敏感/配置/备份/面板路径（含备份文件模糊测试），软 404 基线 + 内容签名降噪。
+- **JS 密钥/端点** `modules/jssecrets.py`：抓取外链 JS，检索硬编码密钥并提取隐藏接口。
+- **API 文档发现** `modules/apidocs.py`：Swagger/OpenAPI/GraphQL/WSDL 等端点暴露检测。
+- **前端安全** `modules/frontend.py`：SRI 缺失、混合内容、CSP 质量（unsafe-inline 等）。
+- **缓存投毒指示** `modules/cachepoison.py`：非缓存键头反射检测（非破坏）。
+- **版本漏洞提示** `modules/cve_version.py`：基于指纹版本比对已知高危版本并提示。
+- **robots/well-known 情报** `modules/wellknown.py`：Disallow 敏感路径线索、sitemap、
+  crossdomain 通配符、security.txt。
+- **子域名接管指纹** `modules/takeover.py`：识别指向未认领第三方服务的接管风险。
+
+### ⚙️ 优化与 Bug 修复
+- **SSRF 误报修复**：v8 会把「参数回显了注入的 URL」这种单纯反射误判为 SSRF，
+  且对 id/q 等非 URL 参数也触发。v9 只测试「URL 汇聚参数」（参数名属 URL 类或
+  原值像 URL），并要求「服务端确实尝试请求」的连接错误特征，反射仅对 sink 参数
+  标信息级。经实测 id/q 不再误报。
+- **端口库扩充**：高危端口从约 35 增至 68（新增 SNMP/LDAP/rsync/RMI/NFS/etcd/
+  AJP/Consul/Webmin/RabbitMQ/CouchDB 等）。
+- **启动展示规则总量**：`total_checks()` 如实统计并显示内置规则/签名总数（1000+），
+  避免夸大。
+- 新增 `--templates` 参数与 `templates_dir` 配置项。
+
+### ⛔ 刻意未实现（安全边界，与 v8 一致）
+利用类功能不予实现：SQLi 自动 dump、命令注入反弹 Shell、XSS Cookie 窃取、
+LFI 读取敏感文件/源码、SSRF 读云元数据/内网/文件、XXE 数据外带、JWT/口令爆破。
+对应能力均以**检测版**提供。
+
+---
+
 ## v8.0.0
 
 ### ✨ 新增检测模块（10 个）

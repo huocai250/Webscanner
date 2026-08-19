@@ -64,6 +64,7 @@ def parse_args():
     scope.add_argument("--wordlist", help="自定义目录字典")
     scope.add_argument("--subdomain-wordlist", help="自定义子域名字典")
     scope.add_argument("--plugins", metavar="DIR", help="插件目录（热加载自定义模块）")
+    scope.add_argument("--templates", metavar="DIR", help="额外 YAML 模板目录（追加签名规则）")
 
     out = p.add_argument_group("输出")
     out.add_argument("-o", "--output", help="JSON 报告")
@@ -113,6 +114,7 @@ def build_config(args, target: str) -> ScanConfig:
     ov("rate", args.rate); ov("max_urls", args.max_urls); ov("max_depth", args.max_depth)
     ov("canary", args.canary); ov("wordlist_file", args.wordlist)
     ov("subdomain_wordlist", args.subdomain_wordlist); ov("plugins_dir", args.plugins)
+    ov("templates_dir", args.templates)
     ov("json_out", args.output); ov("html_out", args.html); ov("md_out", args.md)
     ov("csv_out", args.csv); ov("log_out", args.log)
 
@@ -187,7 +189,10 @@ def run_single(args):
     log("INFO", f"目标: {Colors.CYAN}{Colors.BOLD}{target}{Colors.RESET}")
     log("INFO", f"线程: {cfg.threads} | 超时: {cfg.timeout}s | 代理: {cfg.proxy or '无'} "
                 f"| 模式: {'被动' if cfg.passive else '主动'}")
+    from core.engine import run_scan, total_checks
     log("INFO", f"作用域: {', '.join(cfg.scope) or cfg.host()} | canary: {cfg.canary}")
+    log("INFO", f"内置检测规则/签名: {Colors.BOLD}{total_checks(cfg)}+{Colors.RESET} 条"
+                f"（模板 + 敏感路径 + 指纹 + 载荷 + 端口 + 字典）")
     log("INFO", f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     result = run_scan(cfg, verbose=True)

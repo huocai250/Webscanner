@@ -1,0 +1,185 @@
+id: spring-actuator-env
+info:
+  name: Spring Boot Actuator /env 暴露 (可能泄露凭据)
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /actuator/env
+      - /env
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["propertySources", "activeProfiles"]
+        condition: or
+---
+id: spring-actuator-heapdump
+info:
+  name: Spring Boot Actuator heapdump 暴露 (严重)
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /actuator/heapdump
+      - /heapdump
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: header
+        headers: ["Content-Type"]
+---
+id: druid-monitor
+info:
+  name: Alibaba Druid 监控页暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - paths:
+      - /druid/index.html
+      - /druid/websession.html
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Druid Stat", "druid"]
+        condition: or
+---
+id: thinkphp-invoke-rce-surface
+info:
+  name: ThinkPHP 调试/入口暴露 (RCE 历史 CVE 面)
+  severity: medium
+  category: 配置错误
+requests:
+  - path: /?s=index/\think\app/invokefunction
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["think\\", "ThinkPHP", "invokefunction"]
+        condition: or
+---
+id: apache-server-status
+info:
+  name: Apache server-status 暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - path: /server-status
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Apache Server Status", "Server uptime"]
+        condition: or
+---
+id: nginx-status
+info:
+  name: Nginx stub_status 暴露
+  severity: low
+  category: 信息泄露
+requests:
+  - paths:
+      - /nginx_status
+      - /status
+    matchers-condition: and
+    matchers:
+      - type: word
+        words: ["Active connections:", "server accepts handled requests"]
+        condition: or
+---
+id: phpinfo-exposure
+info:
+  name: phpinfo() 页面暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - paths:
+      - /phpinfo.php
+      - /info.php
+      - /test.php
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Version", "phpinfo()"]
+        condition: or
+---
+id: tomcat-manager
+info:
+  name: Tomcat Manager 暴露
+  severity: high
+  category: 配置错误
+requests:
+  - paths:
+      - /manager/html
+      - /host-manager/html
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["Tomcat Web Application Manager", "401 Unauthorized"]
+        condition: or
+---
+id: jboss-console
+info:
+  name: JBoss/WildFly 管理控制台暴露
+  severity: high
+  category: 配置错误
+requests:
+  - paths:
+      - /jmx-console/
+      - /web-console/
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["JBoss", "jmx-console", "JMX Agent"]
+        condition: or
+---
+id: laravel-telescope
+info:
+  name: Laravel Telescope 调试面板暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - path: /telescope/requests
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Telescope", "telescope"]
+        condition: or
+---
+id: wp-debug-log
+info:
+  name: WordPress debug.log 暴露
+  severity: medium
+  category: 敏感信息泄露
+requests:
+  - path: /wp-content/debug.log
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Notice", "PHP Warning", "PHP Fatal", "Stack trace"]
+        condition: or
+---
+id: idea-workspace
+info:
+  name: JetBrains .idea 目录暴露
+  severity: low
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /.idea/workspace.xml
+      - /.idea/.name
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["<project", "<component"]
+        condition: or

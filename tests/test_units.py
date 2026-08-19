@@ -162,6 +162,89 @@ def test_fingerprint_version():
     assert Fingerprinter._version_for("WordPress", "CMS", hdrs, "WordPress 5.8") == "5.8"
 
 
+# ---------------- v9: 模板引擎 ----------------
+def test_template_matcher():
+    from core.template_engine import TemplateRunner
+
+    class FakeResp:
+        def __init__(self, status, text, headers=None):
+            self.status_code = status
+            self.text = text
+            self.headers = headers or {}
+    tr = TemplateRunner(None, [])
+    # status matcher
+    assert tr._match({"type": "status", "status": [200]}, FakeResp(200, "")) is True
+    assert tr._match({"type": "status", "status": [200]}, FakeResp(404, "")) is False
+    # word matcher (and/or)
+    r = FakeResp(200, "hello world foo")
+    assert tr._match({"type": "word", "words": ["hello", "foo"],
+                      "condition": "and"}, r) is True
+    assert tr._match({"type": "word", "words": ["hello", "zzz"],
+                      "condition": "and"}, r) is False
+    assert tr._match({"type": "word", "words": ["hello", "zzz"],
+                      "condition": "or"}, r) is True
+    # regex + negative
+    assert tr._match({"type": "regex", "regex": ["h.llo"]}, r) is True
+    assert tr._match({"type": "regex", "regex": ["zzz"], "negative": True}, r) is True
+    # header matcher
+    r2 = FakeResp(200, "", {"X-Powered-By": "PHP"})
+    assert tr._match({"type": "header", "headers": ["x-powered-by"]}, r2) is True
+
+
+def test_template_eval_condition():
+    from core.template_engine import TemplateRunner
+
+    class FakeResp:
+        status_code = 200
+        text = "swagger openapi"
+        headers = {}
+    tr = TemplateRunner(None, [])
+    ms = [{"type": "status", "status": [200]},
+          {"type": "word", "words": ["swagger"]}]
+    assert tr._eval(ms, "and", FakeResp()) is True
+    ms2 = [{"type": "status", "status": [500]},
+           {"type": "word", "words": ["swagger"]}]
+    assert tr._eval(ms2, "and", FakeResp()) is False
+    assert tr._eval(ms2, "or", FakeResp()) is True
+
+
+# ---------------- v9: 敏感路径库 ----------------
+def test_exposures_dedup_and_size():
+    from core.data.exposures import EXPOSURES
+    # 去重：路径唯一
+    paths = [p for p, _, _ in EXPOSURES]
+    assert len(paths) == len(set(paths))
+    # 规模足够（构成 1000+ 检测点的主体之一）
+    assert len(EXPOSURES) > 300
+
+
+# ---------------- v9: SSRF 汇聚点判定 ----------------
+def test_ssrf_looks_url():
+    from modules.ssrf import _looks_url, SSRF_PARAM_NAMES
+    assert _looks_url("http://a.com/x") is True
+    assert _looks_url("//evil.com") is True
+    assert _looks_url("example.com/path") is True
+    assert _looks_url("123") is False
+    assert _looks_url("hello") is False
+    assert "url" in SSRF_PARAM_NAMES and "id" not in SSRF_PARAM_NAMES
+
+
+# ---------------- v9: 版本比较 ----------------
+def test_cve_version_compare():
+    from modules.cve_version import _cmp, _lt
+    assert _cmp("1.18.0", "1.21.0") < 0
+    assert _cmp("1.21.0", "1.18.0") > 0
+    assert _cmp("2.4.51", "2.4.51") == 0
+    assert _lt("1.18.0", "1.21.0") is True
+    assert _lt("2.0", "1.9") is False
+
+
+# ---------------- v9: 检测规则总量 ----------------
+def test_total_checks_over_1000():
+    from core.engine import total_checks
+    assert total_checks() > 1000
+
+
 if __name__ == "__main__":
     # 允许不装 pytest 也能跑
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
