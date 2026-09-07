@@ -24,6 +24,7 @@ class GraphQLDeepScanner(BaseScanner):
         self._suggestions(endpoint)
         self._get_query(endpoint)
         self._batching(endpoint)
+        self._dos_surface(endpoint)
 
     def _find(self):
         for p in GQL_PATHS:
@@ -56,6 +57,17 @@ class GraphQLDeepScanner(BaseScanner):
             self.add("GraphQL", "LOW",
                      "GraphQL 支持查询批处理（array），可被用于放大暴力破解",
                      evidence=ep, url=ep, confidence="疑似")
+
+    def _dos_surface(self, ep):
+        # 别名放大：同一字段用多个别名重复请求，若被接受说明缺少查询成本限制
+        aliases = " ".join(f"a{i}: __typename" for i in range(20))
+        r = self.post(ep, json={"query": "{ %s }" % aliases})
+        if r and (r.text or "").count("Query") + (r.text or "").count("__typename") >= 10:
+            self.add("GraphQL", "LOW",
+                     "GraphQL 未限制字段别名重复（可构造别名放大查询），存在 DoS/资源耗尽面；"
+                     "建议启用查询深度/成本限制",
+                     evidence=f"20 个别名被接受 @ {ep}", url=ep, confidence="疑似")
+            log("VULN", "[GraphQL] 别名放大 DoS 面")
 
 
 class JWTAdvancedScanner(BaseScanner):

@@ -19,23 +19,11 @@ class ExposureScanner(BaseScanner):
     name = "exposure"
     passive = False   # 会对大量路径发起请求
 
-    def __init__(self, ctx):
-        super().__init__(ctx)
-        self._soft404_len = None
-        self._soft404_on = False
-
     def run(self):
         log("INFO", f"敏感路径暴露扫描（{len(EXPOSURES)} 条，并发）...")
-        self._calibrate()
+        self.calibrate_soft404()
         found = self.map(self._check, EXPOSURES)
         log("OK", f"暴露扫描完成，发现 {len(found)} 处暴露")
-
-    def _calibrate(self):
-        r = self.get(self.url("nonexistent_" + "zq7x19probe"))
-        if r is not None and r.status_code == 200:
-            self._soft404_on = True
-            self._soft404_len = len(r.text or "")
-            log("INFO", f"检测到软 404（长度 {self._soft404_len}），据此过滤")
 
     def _check(self, entry):
         path, sev, signatures = entry
@@ -50,8 +38,8 @@ class ExposureScanner(BaseScanner):
             if not any(sig in blob for sig in signatures):
                 return None
         else:
-            # 无签名：靠软 404 基线区分
-            if self._soft404_on and abs(len(body) - (self._soft404_len or 0)) < 32:
+            # 无签名：靠软 404 相似度过滤
+            if self.is_soft404(r):
                 return None
             if len(body) == 0:
                 # 空 200 也可能有意义（如某些二进制文件），仅对无签名项要求非空

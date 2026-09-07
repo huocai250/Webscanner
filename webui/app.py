@@ -34,7 +34,7 @@ SCANS = {}
 
 PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebVulnScanner v8</title>
+<title>WebVulnScanner v11</title>
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--mut:#8b949e;
 --acc:#58a6ff;--crit:#f85149;--high:#ff7b72;--med:#d29922;--low:#3fb950;--info:#8b949e}
@@ -70,7 +70,7 @@ vertical-align:top}th{color:var(--mut);font-weight:500}
 border-radius:6px;font-size:12px;margin-bottom:14px}
 a{color:var(--acc)}
 </style></head><body><div class="wrap">
-<h1>🛡️ WebVulnScanner v8</h1>
+<h1>🛡️ WebVulnScanner v11</h1>
 <div class="sub">检测/评估型扫描器 · 仅供授权渗透测试使用</div>
 <div class="warn">⚠ 请确认你已获得目标系统的书面授权。未授权扫描属于违法行为。</div>
 <div class="card">

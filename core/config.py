@@ -47,6 +47,7 @@ class ScanConfig:
     # 爬虫
     crawl: bool = True
     max_urls: int = 100
+    max_requests: int = 0        # 请求总预算（0=不限制），用于控制扫描开销
     max_depth: int = 2
 
     # 作用域（安全护栏）：允许扫描的主机后缀列表，为空则默认锁定目标主机

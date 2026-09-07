@@ -77,25 +77,17 @@ class DirBuster(BaseScanner):
 
     def run(self):
         log("INFO", f"目录枚举 ({len(self.wordlist)} 条字典，{self.threads} 线程)...")
-        self._calibrate_soft404()
+        self.calibrate_soft404()
         found = self.map(self._check, self.wordlist)
         log("OK", f"目录枚举完成，发现 {len(found)} 个可访问路径")
-
-    def _calibrate_soft404(self):
-        """请求一个几乎必然不存在的路径，记录其响应长度，用于识别软 404。"""
-        r = self.get(self.url("this_should_not_exist_" + "zzq19x"))
-        if r is not None and r.status_code == 200:
-            self._soft404_len = len(r.text)
-            log("INFO", f"检测到软 404（200 长度 {self._soft404_len}），将据此过滤")
 
     def _check(self, path):
         url = self.url(path)
         r = self.get(url, allow_redirects=False)
         if not r or r.status_code not in (200, 301, 302, 401, 403):
             return None
-        # 过滤软 404
-        if (r.status_code == 200 and self._soft404_len is not None
-                and abs(len(r.text) - self._soft404_len) < 30):
+        # 过滤软 404（相似度）
+        if r.status_code == 200 and self.is_soft404(r):
             return None
 
         is_high = any(h in path.lower() for h in HIGH_RISK_PATHS)

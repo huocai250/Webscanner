@@ -303,6 +303,93 @@ for _b in _BACKUP_BASES:
         _BACKUP_GEN.append((_b + _e, "MEDIUM", []))
 
 
+# ---- 云 / CI-CD / 密钥管理（v11 扩充）----
+_CICD_CLOUD = [
+    (".gitlab-ci.yml", "LOW", ["stages:", "script:"]),
+    (".github/dependabot.yml", "LOW", ["updates:", "package-ecosystem"]),
+    ("bitbucket-pipelines.yml", "LOW", ["pipelines:", "step:"]),
+    ("azure-pipelines.yml", "LOW", ["trigger:", "pool:", "steps:"]),
+    ("cloudbuild.yaml", "LOW", ["steps:", "name:"]),
+    ("buildspec.yml", "LOW", ["phases:", "version:"]),
+    ("Chart.yaml", "LOW", ["apiVersion:", "name:", "version:"]),
+    ("values.yaml", "MEDIUM", ["image:", "replicaCount", "password"]),
+    ("skaffold.yaml", "LOW", ["apiVersion:", "kind: Config"]),
+    ("serverless.yml", "MEDIUM", ["service:", "provider:", "functions:"]),
+    ("template.yaml", "LOW", ["AWSTemplateFormatVersion", "Resources:"]),
+    ("samconfig.toml", "LOW", ["[default]", "deploy"]),
+    (".aws/config", "MEDIUM", ["[default]", "region ="]),
+    (".boto", "MEDIUM", ["aws_access_key_id", "[Credentials]"]),
+    (".s3cfg", "HIGH", ["access_key", "secret_key"]),
+    (".pgpass", "HIGH", [":"]),
+    (".my.cnf", "HIGH", ["[client]", "password"]),
+    (".netrc", "HIGH", ["machine", "login", "password"]),
+    ("id_ed25519", "CRITICAL", ["PRIVATE KEY"]),
+    ("gcp-key.json", "CRITICAL", ["private_key", "client_email"]),
+    ("sftp-config.json", "MEDIUM", ["\"host\"", "\"password\"", "\"user\""]),
+    (".vscode/sftp.json", "MEDIUM", ["\"host\"", "\"password\""]),
+    (".remote-sync.json", "MEDIUM", ["\"password\"", "\"hostname\""]),
+    ("deploy.php", "MEDIUM", ["host(", "->set(", "Deployer"]),
+    ("wp-content/uploads/dump.sql", "HIGH", ["INSERT INTO", "CREATE TABLE"]),
+    ("storage/app/backup", "MEDIUM", []),
+    ("phpMyAdmin/config.inc.php", "HIGH", ["<?php", "$cfg"]),
+    ("config/master.key", "CRITICAL", []),
+    ("config/credentials.yml.enc", "HIGH", []),
+    ("db/schema.rb", "LOW", ["ActiveRecord::Schema", "create_table"]),
+    ("config/initializers/secret_token.rb", "CRITICAL", ["secret_token", "secret_key_base"]),
+    ("app/config/parameters.yml", "HIGH", ["database_password", "secret"]),
+    ("var/log/dev.log", "MEDIUM", ["request", "app.", "DEBUG"]),
+    ("nbproject/project.properties", "LOW", ["javac.", "netbeans"]),
+    ("WEB-INF/applicationContext.xml", "MEDIUM", ["<beans", "dataSource"]),
+    ("actuator/configprops", "HIGH", ["configurationProperties", "prefix"]),
+    ("actuator/refresh", "MEDIUM", []),
+    ("v1/agent/self", "HIGH", ["Config", "Member", "consul"]),   # Consul
+    ("debug/vars", "MEDIUM", ["cmdline", "memstats"]),           # Go expvar
+    ("api/v4/projects", "MEDIUM", ["\"id\"", "\"path_with_namespace\""]),  # GitLab API
+]
+
+# ---- 更多面板/框架/接口路径（v11 追加，均为公开已知）----
+_EXTRA_V11 = [
+    ("server-status?auto", "MEDIUM", ["Total Accesses", "BusyWorkers"]),
+    ("status?full", "LOW", ["pool:", "accepted conn"]),
+    ("web-console/ServerInfo.jsp", "HIGH", ["JBoss", "ServerInfo"]),
+    ("invoker/JMXInvokerServlet", "HIGH", ["JMXInvoker", "MarshalledInvocation"]),
+    ("wls-wsat/CoordinatorPortType", "HIGH", ["CoordinatorPortType", "wsat"]),
+    ("_async/AsyncResponseService", "HIGH", ["AsyncResponseService", "weblogic"]),
+    ("console/login/LoginForm.jsp", "MEDIUM", ["WebLogic", "j_security_check"]),
+    ("system/console", "HIGH", ["Apache Felix", "OSGi"]),
+    ("manager/text/list", "HIGH", ["OK - Listed applications", "FAIL"]),
+    ("axis2/axis2-admin/", "MEDIUM", ["Axis2", "Administration"]),
+    ("axis/happyaxis.jsp", "MEDIUM", ["Happiness", "Axis"]),
+    ("cgi-bin/status", "LOW", ["Active connections", "server"]),
+    ("owncloud/status.php", "LOW", ["installed", "version", "owncloud"]),
+    ("nextcloud/status.php", "LOW", ["installed", "version", "nextcloud"]),
+    ("remote/fgt_lang", "HIGH", ["FortiGate", "lang"]),
+    ("+CSCOE+/logon.html", "MEDIUM", ["Cisco", "logon"]),
+    ("dana-na/auth/url_default/welcome.cgi", "MEDIUM", ["Pulse", "welcome"]),
+    ("vpn/index.html", "LOW", ["VPN", "login"]),
+    ("api/session/properties", "MEDIUM", ["\"setup-token\"", "metabase"]),
+    ("api/setup", "MEDIUM", ["setup-token", "\"token\""]),
+    ("rest/api/2/serverInfo", "LOW", ["\"baseUrl\"", "\"buildNumber\"", "Jira"]),
+    ("rest/api/1.0/application-properties", "LOW", ["\"version\"", "\"displayName\""]),
+    ("plugins/servlet/gadgets/makeRequest", "HIGH", ["makeRequest", "gadget"]),
+    ("secure/ContactAdministrators!default.jspa", "LOW", ["Jira", "administrators"]),
+    ("xwiki/bin/view/Main/", "LOW", ["XWiki", "wiki"]),
+    ("zabbix.php?action=dashboard.view", "LOW", ["Zabbix", "dashboard"]),
+    ("index.action", "MEDIUM", ["struts", "action"]),
+    ("login.action", "MEDIUM", ["struts", "login"]),
+    ("struts/webconsole.html", "HIGH", ["OGNL", "webconsole"]),
+    ("?XDEBUG_SESSION_START=phpstorm", "LOW", ["Xdebug", "xdebug"]),
+    ("api/v1/pods", "HIGH", ["PodList", "\"kind\""]),
+    ("healthz", "INFO", ["ok"]),
+    ("version", "INFO", ["\"version\"", "\"gitVersion\""]),
+    ("info", "LOW", ["\"version\"", "\"hostname\""]),
+    ("telescope/requests", "MEDIUM", ["Telescope"]),
+    ("horizon/api/stats", "MEDIUM", ["\"jobsPerMinute\"", "horizon"]),
+    ("nova-api", "MEDIUM", ["Nova", "laravel"]),
+    ("filament/", "LOW", ["Filament", "login"]),
+]
+
+
 def _dedup(entries):
     seen, out = set(), []
     for path, sev, sig in entries:
@@ -316,5 +403,5 @@ def _dedup(entries):
 
 EXPOSURES = _dedup(
     _VCS + _SECRETS + _CONFIG + _MORE_CONFIG + _BACKUP + _BACKUP_GEN
-    + _LOGS + _INFO + _PANELS + _MORE_PANELS + _FRAMEWORK + _CLOUD
+    + _LOGS + _INFO + _PANELS + _MORE_PANELS + _FRAMEWORK + _CLOUD + _CICD_CLOUD + _EXTRA_V11
 )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WebVulnScanner v8.0 — 全功能 Web 漏洞扫描工具
+WebVulnScanner v11.0 — 全功能 Web 漏洞扫描工具
 Author : 火柴
 GitHub : https://github.com/huocai250
 Warning: 仅供授权渗透测试与安全研究使用，未经授权扫描属于违法行为！
@@ -30,7 +30,7 @@ from utils.report import (print_terminal, save_json, save_html,
 def parse_args():
     p = argparse.ArgumentParser(
         prog="webscanner",
-        description="WebVulnScanner v8.0 — 仅供授权渗透测试使用",
+        description="WebVulnScanner v11.0 — 仅供授权渗透测试使用",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument("target", nargs="?", help="目标 URL，例如 https://example.com")
@@ -55,6 +55,8 @@ def parse_args():
     crawl.add_argument("--no-crawl", action="store_true", help="禁用爬虫")
     crawl.add_argument("--max-urls", type=int, help="最多爬取页面数（默认 100）")
     crawl.add_argument("--max-depth", type=int, help="爬取深度（默认 2）")
+    crawl.add_argument("--max-requests", type=int, metavar="N",
+                       help="请求总预算上限（0=不限制），控制扫描开销")
 
     scope = p.add_argument_group("作用域与模式")
     scope.add_argument("--scope", action="append", default=[], metavar="HOST",
@@ -114,7 +116,7 @@ def build_config(args, target: str) -> ScanConfig:
     ov("rate", args.rate); ov("max_urls", args.max_urls); ov("max_depth", args.max_depth)
     ov("canary", args.canary); ov("wordlist_file", args.wordlist)
     ov("subdomain_wordlist", args.subdomain_wordlist); ov("plugins_dir", args.plugins)
-    ov("templates_dir", args.templates)
+    ov("templates_dir", args.templates); ov("max_requests", args.max_requests)
     ov("json_out", args.output); ov("html_out", args.html); ov("md_out", args.md)
     ov("csv_out", args.csv); ov("log_out", args.log)
 

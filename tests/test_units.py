@@ -302,6 +302,77 @@ def test_total_checks_v10():
     assert len(PLAN) >= 50
 
 
+# ---------------- v11: 软 404 相似度过滤 ----------------
+def test_soft404_similarity():
+    from core.scanner import BaseScanner, ScanContext
+    from core.config import ScanConfig
+    from core.result import ScanResult
+
+    class FakeResp:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+            self.headers = {}
+    cfg = ScanConfig(target="http://x")
+    ctx = ScanContext(cfg, ScanResult("http://x"))
+    # 手动注入软 404 校准样本
+    ctx.soft404 = {"statuses": {200},
+                   "samples": ["<html><body>Page not found. Sorry!</body></html>"]}
+    s = BaseScanner(ctx)
+    # 与样本几乎一致 -> 判为软 404
+    assert s.is_soft404(FakeResp(200, "<html><body>Page not found. Sorry!</body></html>")) is True
+    # 完全不同的真实内容 -> 不是软 404
+    assert s.is_soft404(FakeResp(200, "<html><h1>Admin Panel</h1><form>login</form></html>")) is False
+    # 状态码不匹配 -> 不是软 404
+    assert s.is_soft404(FakeResp(404, "whatever")) is False
+
+
+# ---------------- v11: DOM XSS 源/汇 ----------------
+def test_domxss_sources_sinks():
+    from modules.dom_xss import SOURCES, SINKS
+    # SOURCES 是正则字符串（点被转义为 \.），按子串判断关键字
+    assert any("location" in s and "hash" in s for s in SOURCES)
+    labels = [lbl for _, lbl in SINKS]
+    assert "innerHTML" in labels and "eval" in labels
+    assert len(SINKS) >= 6
+
+
+# ---------------- v11: PHP 包装器 base64 判定 ----------------
+def test_phpwrapper_base64():
+    import base64
+    from modules.phpwrappers import PHPWrapperScanner
+    # 较长的 PHP 源码，base64 后超过阈值且含源码特征
+    php = b"<?php echo 'hello world'; function login($u){ return true; } $x=1; ?>"
+    src = base64.b64encode(php).decode()
+    blob = "junk prefix " + src + " suffix junk"
+    assert PHPWrapperScanner._looks_base64_blob(blob) is True
+    # 普通短 base64 不含源码特征 -> 不判定
+    assert PHPWrapperScanner._looks_base64_blob(base64.b64encode(b"hi").decode()) is False
+
+
+# ---------------- v11: 安全头策略检查项 ----------------
+def test_header_policy_checks():
+    from modules.header_policy import CHECKS
+    keys = [k for k, *_ in CHECKS]
+    assert "referrer-policy" in keys
+    assert "cross-origin-opener-policy" in keys
+
+
+# ---------------- v11: 请求预算配置 ----------------
+def test_max_requests_config():
+    from core.config import ScanConfig
+    cfg = ScanConfig(target="http://x", max_requests=500)
+    assert cfg.max_requests == 500
+    assert ScanConfig(target="http://x").max_requests == 0   # 默认不限制
+
+
+# ---------------- v11: 检测规则总量（再扩容） ----------------
+def test_total_checks_v11():
+    from core.engine import total_checks, PLAN
+    assert total_checks() > 1500
+    assert len(PLAN) >= 60
+
+
 if __name__ == "__main__":
     # 允许不装 pytest 也能跑
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

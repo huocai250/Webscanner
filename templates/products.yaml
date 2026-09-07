@@ -1,0 +1,152 @@
+id: gitlab-api-projects
+info:
+  name: GitLab 项目 API 未授权可读
+  severity: medium
+  category: 信息泄露
+requests:
+  - path: /api/v4/projects
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["path_with_namespace", "\"visibility\""]
+        condition: or
+---
+id: consul-agent-self
+info:
+  name: Consul Agent 未授权访问
+  severity: high
+  category: 配置错误
+requests:
+  - path: /v1/agent/self
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Config", "Member", "\"Consul\""]
+        condition: or
+---
+id: kubernetes-api
+info:
+  name: Kubernetes API 未授权探测
+  severity: high
+  category: 配置错误
+requests:
+  - paths:
+      - /api/v1/namespaces
+      - /apis
+    matchers-condition: and
+    matchers:
+      - type: word
+        words: ["\"kind\"", "APIVersions", "NamespaceList"]
+        condition: or
+---
+id: prometheus-targets
+info:
+  name: Prometheus 配置/targets 暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - paths:
+      - /api/v1/targets
+      - /api/v1/status/config
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["\"activeTargets\"", "\"scrape_configs\"", "\"status\":\"success\""]
+        condition: or
+---
+id: docker-registry-catalog
+info:
+  name: Docker Registry 目录未授权
+  severity: high
+  category: 配置错误
+requests:
+  - path: /v2/_catalog
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["\"repositories\""]
+---
+id: actuator-gateway-routes
+info:
+  name: Spring Cloud Gateway 路由暴露 (SSRF/RCE 面)
+  severity: high
+  category: 配置错误
+requests:
+  - path: /actuator/gateway/routes
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["route_id", "predicate", "\"uri\""]
+        condition: or
+---
+id: jenkins-script-console
+info:
+  name: Jenkins 脚本控制台可达 (RCE 面)
+  severity: high
+  category: 配置错误
+requests:
+  - path: /script
+    matchers-condition: and
+    matchers:
+      - type: word
+        words: ["Script Console", "hudson", "Groovy"]
+        condition: or
+---
+id: wordpress-user-enum
+info:
+  name: WordPress 用户名枚举 (REST API)
+  severity: medium
+  category: 信息泄露
+requests:
+  - path: /wp-json/wp/v2/users
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["\"slug\"", "\"name\""]
+        condition: and
+---
+id: env-actuator-combo
+info:
+  name: Spring 环境变量 (env) 端点暴露
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /actuator/env
+      - /env
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["propertySources", "systemEnvironment"]
+        condition: or
+---
+id: graphql-introspection-open
+info:
+  name: GraphQL introspection 开启
+  severity: medium
+  category: 信息泄露
+requests:
+  - method: POST
+    path: /graphql
+    body: "{\"query\":\"{__schema{types{name}}}\"}"
+    headers:
+      Content-Type: application/json
+    matchers-condition: and
+    matchers:
+      - type: word
+        words: ["__schema", "\"types\"", "queryType"]
+        condition: or

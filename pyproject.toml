@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webvulnscanner"
-version = "10.0.0"
+version = "11.0.0"
 description = "全功能 Web 漏洞扫描工具（仅供授权渗透测试与安全研究使用）"
 readme = "README.md"
 requires-python = ">=3.10"

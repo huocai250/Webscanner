@@ -72,6 +72,12 @@ class ScanContext:
         self.probe_cache: dict = {}
         self._probe_lock = threading.Lock()
 
+        # 软 404 校准（跨模块共享；基于相似度而非精确长度，降低误报/漏报）
+        # 结构：{"statuses": set, "samples": [str, ...]} 或 None（无软 404）
+        self.soft404 = None
+        self._soft404_state = "pending"   # pending -> done
+        self._soft404_lock = threading.Lock()
+
     def add_fingerprint(self, name: str, category: str, version: str = ""):
         key = (name, category)
         with self._fp_lock:
@@ -119,6 +125,14 @@ class BaseScanner:
             if host not in self.ctx._scope_warned:
                 self.ctx._scope_warned.add(host)
                 log("SKIP", f"跳过作用域外目标: {host}")
+            return None
+
+        # 请求预算：超过 max_requests 后停止发起新请求（0 表示不限制）
+        budget = getattr(self.config, "max_requests", 0)
+        if budget and self.result.request_count >= budget:
+            if not getattr(self.ctx, "_budget_warned", False):
+                self.ctx._budget_warned = True
+                log("WARN", f"已达请求预算上限 {budget}，后续请求将被跳过")
             return None
 
         kwargs.setdefault("timeout", self.timeout)
@@ -177,6 +191,43 @@ class BaseScanner:
         with self.ctx._probe_lock:
             self.ctx.probe_cache[url] = resp
         return resp
+
+    def calibrate_soft404(self):
+        """校准软 404：请求两个几乎必然不存在的随机路径，记录其状态与内容样本。
+        跨模块共享，只做一次。基于内容相似度识别软 404（比精确长度更稳健）。"""
+        with self.ctx._soft404_lock:
+            if self.ctx._soft404_state == "done":
+                return
+            self.ctx._soft404_state = "done"
+        import random, string
+        statuses, samples = set(), []
+        for _ in range(2):
+            rnd = "".join(random.choice(string.ascii_lowercase) for _ in range(12))
+            r = self.get(self.url("/wvs404_" + rnd))
+            if r is not None:
+                statuses.add(r.status_code)
+                samples.append((r.text or "")[:2000])
+        # 只有当「不存在路径」返回 200/2xx 时才构成软 404 场景
+        if any(200 <= s < 300 for s in statuses):
+            with self.ctx._soft404_lock:
+                self.ctx.soft404 = {"statuses": statuses, "samples": samples}
+            from core.colors import log
+            log("INFO", f"检测到软 404（不存在路径返回 {statuses}），启用相似度过滤")
+
+    def is_soft404(self, resp) -> bool:
+        """判断响应是否疑似软 404（与校准样本高度相似）。"""
+        s = self.ctx.soft404
+        if not resp or not s:
+            return False
+        if resp.status_code not in s["statuses"]:
+            return False
+        body = (resp.text or "")[:2000]
+        import difflib
+        for sample in s["samples"]:
+            # quick_ratio 足够快；>0.9 视为与软 404 页几乎一致
+            if difflib.SequenceMatcher(None, body, sample).quick_ratio() > 0.9:
+                return True
+        return False
 
     def map(self, fn: Callable, items: Iterable, workers: int = None) -> List:
         """并发对 items 执行 fn，返回非 None 结果列表。"""

@@ -1,5 +1,46 @@
 # 更新日志
 
+## v11.0.0
+
+### ✨ 新增检测模块（10 个）
+- **HTTP 参数污染 (HPP)** `modules/hpp.py`：重复参数解析行为检测。
+- **动词篡改 / 方法覆盖 / WebDAV** `modules/verbtamper.py`：X-HTTP-Method-Override 是否被解析、
+  PROPFIND/PUT 等写方法是否开启（只读探测，不改资源）。
+- **PHP 包装器 / LFI 向量** `modules/phpwrappers.py`：php://filter、data:// 是否被解析
+  （用编码/无害标记判定，不读敏感文件、不执行代码）。
+- **DOM XSS 静态分析** `modules/dom_xss.py`：在 JS 中查找「可控源 + 危险汇聚点」组合
+  （location.hash → innerHTML/eval 等），只静态分析不执行。
+- **CORS 高级绕过** `modules/cors_advanced.py`：null 源、子域信任、前/后缀匹配缺陷、
+  明文源被信任等白名单绕过模式。
+- **会话固定** `modules/session.py`：是否接受攻击者预置会话 ID 且不重新签发。
+- **敏感页缓存** `modules/session.py`：敏感/个性化页面是否缺少 no-store/private 而可能被缓存。
+- **WebSocket / 实时端点检测** `modules/websocket.py`：ws/wss、Socket.IO、SignalR 端点发现。
+- **全站 PII/密钥深扫** `modules/pii.py`：把密钥/PII 正则应用到所有爬取页面（证据脱敏）。
+- **安全头策略深度** `modules/header_policy.py`：Referrer-Policy、Permissions-Policy、
+  COOP/COEP/CORP、限流头存在性。
+- 另：GraphQL 深度模块新增「别名放大 DoS 面」检测。
+
+### 📈 规则扩充（1500+）
+- 敏感路径 671 → **747**（新增云/CI-CD/密钥管理/更多面板与接口路径）。
+- 新增 YAML 模板包 `templates/products.yaml`（Consul/K8s/Docker Registry/Spring Gateway 等）。
+- 内置检测规则/签名总量 **1520**，启动时如实显示，可继续用模板扩展。
+
+### ⚙️ 优化与 Bug 修复
+- **软 404 检测升级**：由「精确长度比对」改为 `difflib` **内容相似度**识别，两个随机探针
+  校准、跨模块共享；既减少误报又补上漏报。exposure/dirbust 均改用共享实现。
+- **`--max-requests` 请求预算**：新增 CLI 选项与请求层强制上限，超额自动跳过，控制扫描开销。
+- **会话固定 Bug 修复**：扫描中途共享 Session 已持有会话 Cookie 导致取不到 Cookie 名；
+  改为回退到 Cookie 罐读取，并修正「重签发」判定（回显原值也算未重签发）。
+- 沿用 v9/v10 的 SSRF、SSI、反序列化等误报修复；模块异常隔离。
+- 经实测：10 个新模块在无漏洞靶机上 **零误报**，在含对应漏洞的端点上均能正确检出
+  （CORS 绕过 / PHP 包装器 / 方法覆盖 / WebDAV / HPP / DOM XSS / 会话固定 / WebSocket 已逐一验证）。
+
+### ⛔ 刻意未实现（安全边界，一以贯之）
+利用类功能不予实现。新模块（PHP 包装器、CORS 绕过、会话固定等）均只做**检测与加固提示**，
+不读取敏感文件、不窃取跨源数据、不劫持会话、不构造任何利用链。
+
+---
+
 ## v10.0.0
 
 ### ✨ 新增检测模块（17 个）—— 注入类漏洞覆盖趋于完整

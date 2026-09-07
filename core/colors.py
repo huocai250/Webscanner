@@ -115,7 +115,7 @@ def banner():
  ╚███╔███╔╝███████╗██████╔╝███████║╚██████╗██║  ██║██║ ╚████║
   ╚══╝╚══╝ ╚══════╝╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝
 {Colors.RESET}
-  {Colors.BOLD}Web Vulnerability Scanner v10.0{Colors.RESET}  {Colors.DIM}(52 检测模块 · 1300+ 规则){Colors.RESET}
+  {Colors.BOLD}Web Vulnerability Scanner v11.0{Colors.RESET}  {Colors.DIM}(62 检测模块 · 1500+ 规则){Colors.RESET}
   {Colors.DIM}Author : {Colors.CYAN}火柴{Colors.RESET}
   {Colors.DIM}GitHub : {Colors.CYAN}https://github.com/huocai250{Colors.RESET}
   {Colors.DIM}Warning: 仅供授权渗透测试与安全研究使用{Colors.RESET}
