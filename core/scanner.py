@@ -68,6 +68,10 @@ class ScanContext:
         self._fp_lock = threading.Lock()
         self._fp_seen = set()
 
+        # 幂等路径探测响应缓存（exposure/dirbust/apidocs/templates 共享，避免重复请求）
+        self.probe_cache: dict = {}
+        self._probe_lock = threading.Lock()
+
     def add_fingerprint(self, name: str, category: str, version: str = ""):
         key = (name, category)
         with self._fp_lock:
@@ -161,6 +165,17 @@ class BaseScanner:
         resp = self.get(url)
         with self.ctx._baseline_lock:
             self.ctx._baseline[url] = resp
+        return resp
+
+    def probe_get(self, url: str) -> Optional[requests.Response]:
+        """幂等 GET 探测（跨模块共享缓存）。用于批量路径存在性检测，
+        避免 exposure/dirbust/apidocs/templates 重复请求同一路径。"""
+        with self.ctx._probe_lock:
+            if url in self.ctx.probe_cache:
+                return self.ctx.probe_cache[url]
+        resp = self.get(url)
+        with self.ctx._probe_lock:
+            self.ctx.probe_cache[url] = resp
         return resp
 
     def map(self, fn: Callable, items: Iterable, workers: int = None) -> List:

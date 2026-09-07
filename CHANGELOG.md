@@ -1,5 +1,48 @@
 # 更新日志
 
+## v10.0.0
+
+### ✨ 新增检测模块（17 个）—— 注入类漏洞覆盖趋于完整
+- **NoSQL 注入** `modules/nosqli.py`：MongoDB 运算符/布尔差异 + 错误特征。
+- **LDAP 注入** `modules/ldap_xpath.py`：LDAP 元字符 + 错误特征。
+- **XPath 注入** `modules/ldap_xpath.py`：XPath 元字符 + 错误特征。
+- **SSI 注入** `modules/ssi.py`：无害 printenv 探针（要求多个环境变量特征，低误报）。
+- **EL/OGNL/SpEL 表达式注入** `modules/prototype.py`：算术求值 + 引擎错误特征。
+- **原型链污染** `modules/prototype.py`：`__proto__`/constructor 探针。
+- **邮件头注入** `modules/headerinj.py`：邮件参数换行注入。
+- **CSV 公式注入** `modules/headerinj.py`：导出字段公式注入（仅在导出响应上判定）。
+- **反序列化指示** `modules/deserial.py`：识别 Java/PHP/Python/.NET/Ruby 序列化特征（仅提示，不利用）。
+- **源码泄露** `modules/sourcecode.py`：源码文件被当静态文件下载 + 首页 PHP 源码外泄。
+- **调试端点** `modules/sourcecode.py`：pprof/expvar/debugbar/rails-info 等诊断端点暴露。
+- **CSP 深度评估** `modules/csp.py`：缺失指令、可绕过白名单域、unsafe-inline 无 nonce 等。
+- **Cookie 深度分析** `modules/csp.py`：__Host-/__Secure- 前缀、SameSite=None 无 Secure、过宽 Domain。
+- **GraphQL 深度** `modules/graphql_deep.py`：字段建议泄露、GET 查询 CSRF、批处理放大。
+- **JWT 高级分析** `modules/graphql_deep.py`：kid 注入面、jku/x5u 远程密钥、算法混淆（仅分析，不破解）。
+- **OAuth/OIDC 配置** `modules/cachedeception.py`：宽松 redirect_uri、state/PKCE 提示。
+- **Web 缓存欺骗** `modules/cachedeception.py`：伪静态后缀导致敏感页被缓存。
+
+### 📈 规则扩充（1300+）
+- 指纹规则 56 → **98**（新增大量 CMS/框架/服务器/WAF/CDN 签名）。
+- 新增 YAML 模板包 `templates/tokens.yaml`、`templates/misconfig.yaml`。
+- 内置检测规则/签名总量 **1391**，启动时如实显示，可继续用模板扩展。
+
+### ⚙️ 优化与 Bug 修复（多轮）
+- **共享探测缓存**：新增 `ScanContext.probe_cache` 与 `probe_get()`，exposure/apidocs/
+  模板引擎的幂等路径探测共享缓存，去除跨模块重复请求，降低请求量与目标压力。
+- **SSI 误报修复**：原签名含 `:`/`20` 等极易命中的字符会误报；改为只认多个服务器
+  环境变量特征（需 ≥2 命中）。
+- **反序列化 PHP 特征收紧**：只认结构化对象/数组前缀（`O:`/`a:`），不再把 JSON 误判。
+- **调试端点判定逻辑修复**：无签名项在 200/405 下的判定统一，去除逻辑漏判。
+- 沿用 v9 的 SSRF 误报修复；模块异常隔离，单模块出错不影响整体扫描。
+- 经实测：新注入模块在无漏洞的靶机上 **零误报**，在有漏洞端点上均能正确检出。
+
+### ⛔ 刻意未实现（安全边界，一以贯之）
+利用类功能不予实现：自动 dump/反弹 Shell/Cookie 窃取/SSRF 读云元数据·内网·文件/
+XXE 外带/口令·密钥爆破。反序列化、JWT、OAuth 等均只做**检测与加固提示**，不构造
+任何利用链。
+
+---
+
 ## v9.0.0
 
 ### ✨ 模板签名引擎（核心新增）

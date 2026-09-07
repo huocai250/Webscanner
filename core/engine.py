@@ -12,35 +12,54 @@ from core.plugins import load_plugins
 from modules import (
     Crawler, InfoGatherer, Fingerprinter, CVEVersionScanner, HeaderChecker,
     SSLChecker, SensitiveInfoScanner, JSSecretScanner, ExposureScanner,
-    TemplateScanner, MisconfigScanner, FrontendScanner, WellKnownScanner,
-    TakeoverScanner, APIDocsScanner, MethodScanner, GraphQLScanner,
-    HostHeaderScanner, JWTScanner, CMSScanner, CORSScanner, CSRFScanner,
-    OpenRedirectScanner, CRLFScanner, CachePoisonScanner, SQLiScanner,
-    XSSScanner, LFIScanner, PathTraversalScanner, XXEScanner, SSRFScanner,
-    Log4ShellScanner, SubdomainScanner, PortScanner, DirBuster,
+    TemplateScanner, MisconfigScanner, FrontendScanner, CSPScanner, CookieScanner,
+    WellKnownScanner, TakeoverScanner, APIDocsScanner, SourceDisclosureScanner,
+    DebugEndpointScanner, DeserializationScanner, MethodScanner, GraphQLScanner,
+    GraphQLDeepScanner, JWTAdvancedScanner, HostHeaderScanner, JWTScanner,
+    CMSScanner, CORSScanner, CSRFScanner, OpenRedirectScanner, CRLFScanner,
+    HeaderInjectionScanner, CSVFormulaScanner, CachePoisonScanner,
+    CacheDeceptionScanner, OAuthScanner, SQLiScanner, NoSQLiScanner,
+    LDAPInjectionScanner, XPathInjectionScanner, XSSScanner, SSIScanner,
+    ProtoPollutionScanner, ELInjectionScanner, LFIScanner, PathTraversalScanner,
+    XXEScanner, SSRFScanner, Log4ShellScanner, SubdomainScanner, PortScanner,
+    DirBuster,
 )
 
 # 扫描执行顺序（爬虫/指纹先行；被动检测居中；主动注入模块在后）
 PLAN = [
+    # 信息收集 / 指纹
     Crawler, InfoGatherer, Fingerprinter, CVEVersionScanner,
-    HeaderChecker, SSLChecker, SensitiveInfoScanner, JSSecretScanner,
-    MisconfigScanner, FrontendScanner, WellKnownScanner, TakeoverScanner,
-    APIDocsScanner, TemplateScanner, MethodScanner, GraphQLScanner,
-    HostHeaderScanner, JWTScanner, CMSScanner, CORSScanner, CSRFScanner,
-    OpenRedirectScanner, CRLFScanner, CachePoisonScanner, SQLiScanner,
-    XSSScanner, LFIScanner, PathTraversalScanner, XXEScanner, SSRFScanner,
-    Log4ShellScanner, ExposureScanner, SubdomainScanner, PortScanner, DirBuster,
+    # 被动配置 / 传输 / 泄露
+    HeaderChecker, SSLChecker, CSPScanner, CookieScanner, SensitiveInfoScanner,
+    JSSecretScanner, MisconfigScanner, FrontendScanner, WellKnownScanner,
+    TakeoverScanner, APIDocsScanner, SourceDisclosureScanner, DebugEndpointScanner,
+    DeserializationScanner, TemplateScanner, MethodScanner, GraphQLScanner,
+    GraphQLDeepScanner, HostHeaderScanner, JWTScanner, JWTAdvancedScanner,
+    CMSScanner, OAuthScanner, CORSScanner, CSRFScanner,
+    # 主动注入 / 漏洞
+    OpenRedirectScanner, CRLFScanner, HeaderInjectionScanner, CachePoisonScanner,
+    CacheDeceptionScanner, CSVFormulaScanner, SQLiScanner, NoSQLiScanner,
+    LDAPInjectionScanner, XPathInjectionScanner, XSSScanner, SSIScanner,
+    ELInjectionScanner, ProtoPollutionScanner, LFIScanner, PathTraversalScanner,
+    XXEScanner, SSRFScanner, Log4ShellScanner,
+    # 重型主动扫描
+    ExposureScanner, SubdomainScanner, PortScanner, DirBuster,
 ]
 
 DISPLAY = {
     "crawler": "爬虫", "info": "信息收集", "fingerprint": "指纹识别",
     "cveversion": "版本漏洞提示", "headers": "安全头检测", "ssl": "SSL/TLS",
-    "sensitive": "敏感信息", "jssecrets": "JS密钥/端点", "misconfig": "配置错误",
-    "frontend": "前端安全", "wellknown": "robots/well-known", "takeover": "子域名接管",
-    "apidocs": "API文档发现", "templates": "模板签名库", "methods": "HTTP方法",
-    "graphql": "GraphQL", "hostheader": "Host头注入", "jwt": "JWT安全",
-    "cms": "CMS专项", "cors": "CORS", "csrf": "CSRF", "redirect": "开放重定向",
-    "crlf": "CRLF注入", "cachepoison": "缓存投毒", "sqli": "SQL注入", "xss": "XSS",
+    "csp": "CSP评估", "cookiesec": "Cookie深度分析", "sensitive": "敏感信息",
+    "jssecrets": "JS密钥/端点", "misconfig": "配置错误", "frontend": "前端安全",
+    "wellknown": "robots/well-known", "takeover": "子域名接管", "apidocs": "API文档发现",
+    "sourcecode": "源码泄露", "debugendp": "调试端点", "deserial": "反序列化指示",
+    "templates": "模板签名库", "methods": "HTTP方法", "graphql": "GraphQL",
+    "graphqldeep": "GraphQL深度", "hostheader": "Host头注入", "jwt": "JWT安全",
+    "jwtadv": "JWT高级分析", "cms": "CMS专项", "oauth": "OAuth配置", "cors": "CORS",
+    "csrf": "CSRF", "redirect": "开放重定向", "crlf": "CRLF注入", "headerinj": "邮件头注入",
+    "cachepoison": "缓存投毒", "cachedeception": "缓存欺骗", "csvinj": "CSV公式注入",
+    "sqli": "SQL注入", "nosqli": "NoSQL注入", "ldapi": "LDAP注入", "xpathi": "XPath注入",
+    "xss": "XSS", "ssi": "SSI注入", "eli": "表达式注入", "protopollution": "原型链污染",
     "lfi": "LFI/命令注入", "traversal": "路径穿越", "xxe": "XXE注入", "ssrf": "SSRF",
     "log4shell": "Log4Shell", "exposure": "敏感路径暴露", "subdomain": "子域名枚举",
     "ports": "端口扫描", "dirbust": "目录枚举",
@@ -68,7 +87,6 @@ def total_checks(cfg=None) -> int:
         n += count_checks(load_templates(dirs))
     except Exception:
         pass
-    # 其余模块内置的规则/字典/载荷
     try:
         from modules.dirbust import BUILTIN_WORDLIST
         n += len(BUILTIN_WORDLIST)
@@ -99,9 +117,10 @@ def total_checks(cfg=None) -> int:
         n += len(API_ENDPOINTS)
     except Exception:
         pass
-    # 各注入模块的载荷集合（粗略计入）
+    # 各注入/检测模块的载荷与签名集合（粗略计入）
     try:
-        from modules import sqli, xss, lfi, redirect, traversal, crlf, log4shell
+        from modules import (sqli, xss, lfi, redirect, traversal, crlf, log4shell,
+                             nosqli, ldap_xpath, ssi, headerinj, prototype, sourcecode)
         for mod, attrs in [
             (sqli, ["ERROR_PAYLOADS", "BOOLEAN_PAYLOADS", "TIME_PAYLOADS", "ERROR_PATTERNS"]),
             (xss, ["REFLECTED_PAYLOADS", "SSTI_PAYLOADS", "DOM_INDICATORS"]),
@@ -109,6 +128,10 @@ def total_checks(cfg=None) -> int:
             (redirect, ["REDIRECT_PAYLOADS", "REDIRECT_PARAMS"]),
             (traversal, ["TRAVERSALS"]), (crlf, ["PAYLOADS"]),
             (log4shell, ["HEADERS", "PARAMS"]),
+            (nosqli, ["ERROR_SIGNS", "BOOL_PAIRS"]),
+            (ldap_xpath, ["LDAP_ERRORS", "XPATH_ERRORS"]),
+            (ssi, ["PROBES"]), (headerinj, ["MAIL_PARAMS", "HEADER_ERRORS"]),
+            (prototype, []), (sourcecode, ["SOURCE_CHECKS"]),
         ]:
             for a in attrs:
                 v = getattr(mod, a, None)
@@ -137,10 +160,7 @@ def build_plan(cfg: ScanConfig):
 
 
 def run_scan(cfg: ScanConfig, progress=None, verbose=True) -> ScanResult:
-    """
-    对单个目标执行完整扫描并返回结果。
-    progress: 可选回调 progress(name_cn, done, total, findings_so_far)
-    """
+    """对单个目标执行完整扫描并返回结果。"""
     result = ScanResult(cfg.normalized_target())
     ctx = ScanContext(cfg, result)
     plan = build_plan(cfg)

@@ -42,7 +42,7 @@ class APIDocsScanner(BaseScanner):
 
     def _check(self, entry):
         path, signs, sev, desc = entry
-        r = self.get(self.url(path))
+        r = self.probe_get(self.url(path))
         if not r or r.status_code not in (200, 401, 403):
             return None
         blob = (r.text or "")[:20000]

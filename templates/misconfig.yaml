@@ -1,0 +1,129 @@
+id: cors-wildcard-header
+info:
+  name: CORS 通配符响应头
+  severity: medium
+  category: CORS
+requests:
+  - path: /
+    headers:
+      Origin: https://wvs-cors.evil.example
+    matchers-condition: and
+    matchers:
+      - type: header
+        headers: ["Access-Control-Allow-Origin"]
+      - type: regex
+        part: header
+        regex: ["Access-Control-Allow-Origin:\\s*\\*"]
+---
+id: directory-listing
+info:
+  name: 目录列表开启
+  severity: medium
+  category: 信息泄露
+requests:
+  - paths:
+      - /uploads/
+      - /images/
+      - /files/
+      - /backup/
+      - /static/
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Index of /", "<title>Index of", "Directory listing for"]
+        condition: or
+---
+id: git-directory-listing
+info:
+  name: .git 目录可浏览
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - path: /.git/
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Index of", "HEAD", "objects", "refs"]
+        condition: and
+---
+id: php-cgi-source-disclosure
+info:
+  name: PHP 源码泄露探测
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /index.php.bak
+      - /index.php~
+      - /index.phps
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["<?php", "<?="]
+        condition: or
+---
+id: server-header-disclosure
+info:
+  name: Server 头泄露版本信息
+  severity: info
+  category: 信息泄露
+requests:
+  - path: /
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: header
+        regex: ["Server:\\s*\\S+/[0-9]+\\.[0-9]+"]
+---
+id: x-powered-by-disclosure
+info:
+  name: X-Powered-By 头泄露技术栈
+  severity: info
+  category: 信息泄露
+requests:
+  - path: /
+    matchers-condition: and
+    matchers:
+      - type: header
+        headers: ["X-Powered-By"]
+---
+id: aspnet-debug-enabled
+info:
+  name: ASP.NET 调试/追踪暴露
+  severity: medium
+  category: 信息泄露
+requests:
+  - paths:
+      - /trace.axd
+      - /elmah.axd
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Application Trace", "Error Log for", "ELMAH"]
+        condition: or
+---
+id: env-backup-variants
+info:
+  name: .env 备份变体暴露
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /.env.bak
+      - /.env.save
+      - /.env.old
+      - /.env.production.local
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: regex
+        regex: ["(DB_|APP_|SECRET|PASSWORD)[A-Z_]*\\s*="]

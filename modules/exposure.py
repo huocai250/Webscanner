@@ -39,7 +39,7 @@ class ExposureScanner(BaseScanner):
 
     def _check(self, entry):
         path, sev, signatures = entry
-        r = self.get(self.url(path))
+        r = self.probe_get(self.url(path))
         if r is None or r.status_code != 200:
             return None
         body = r.text or ""

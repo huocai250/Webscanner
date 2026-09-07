@@ -245,6 +245,63 @@ def test_total_checks_over_1000():
     assert total_checks() > 1000
 
 
+# ---------------- v10: 反序列化特征识别 ----------------
+def test_deserial_detectors():
+    import base64
+    from modules.deserial import (_java_b64, _php_serialized, _python_pickle,
+                                   _ruby_marshal, _dotnet_viewstate)
+    # Java 序列化 magic 0xAC 0xED -> base64 "rO0AB"
+    assert _java_b64("rO0ABXNyABc") is True
+    assert _java_b64("hello") is False
+    # PHP 序列化对象/数组
+    assert _php_serialized('O:8:"stdClass":1:{s:1:"a";i:1;}') is True
+    assert _php_serialized('a:2:{i:0;s:1:"x";}') is True
+    assert _php_serialized('{"json":"obj"}') is False   # 不误判 JSON
+    assert _php_serialized('hello world') is False
+    # Python pickle protocol magic
+    assert _python_pickle(base64.b64encode(b"\x80\x04testing").decode()) is True
+    assert _python_pickle(base64.b64encode(b"not pickle").decode()) is False
+    # Ruby Marshal magic \x04\x08
+    assert _ruby_marshal(base64.b64encode(b"\x04\x08abc").decode()) is True
+    # .NET ViewState
+    assert _dotnet_viewstate("/wEPDwUKLT") is True
+    assert _dotnet_viewstate("random") is False
+
+
+# ---------------- v10: SSI 命中计数 ----------------
+def test_ssi_hits():
+    from modules.ssi import _hits
+    body = "DOCUMENT_ROOT=/var/www SERVER_SOFTWARE=nginx REQUEST_METHOD=GET"
+    signs = ["DOCUMENT_ROOT", "SERVER_SOFTWARE", "REQUEST_METHOD", "GATEWAY_INTERFACE"]
+    assert _hits(body, signs) == 3   # 需 >=2 才判定，此处 3
+    assert _hits("just a colon: and year 2024", signs) == 0   # 不再被冒号/年份误判
+
+
+# ---------------- v10: 注入模块签名齐备 ----------------
+def test_injection_modules_loaded():
+    from modules.nosqli import ERROR_SIGNS, BOOL_PAIRS
+    from modules.ldap_xpath import LDAP_ERRORS, XPATH_ERRORS
+    from modules.prototype import ELInjectionScanner
+    assert len(ERROR_SIGNS) >= 5 and len(BOOL_PAIRS) >= 2
+    assert len(LDAP_ERRORS) >= 5 and len(XPATH_ERRORS) >= 5
+    # EL 载荷含算术标记以便判定求值
+    assert any(exp == "49" for _, exp in ELInjectionScanner.PAYLOADS)
+
+
+# ---------------- v10: CSP 绕过域库 ----------------
+def test_csp_bypass_hosts():
+    from modules.csp import BYPASS_HOSTS
+    assert "ajax.googleapis.com" in BYPASS_HOSTS
+    assert len(BYPASS_HOSTS) >= 5
+
+
+# ---------------- v10: 检测规则总量（扩容后） ----------------
+def test_total_checks_v10():
+    from core.engine import total_checks, PLAN
+    assert total_checks() > 1300
+    assert len(PLAN) >= 50
+
+
 if __name__ == "__main__":
     # 允许不装 pytest 也能跑
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

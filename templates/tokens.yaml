@@ -1,0 +1,97 @@
+id: aws-credentials-file
+info:
+  name: AWS 凭据文件暴露 (.aws/credentials)
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /.aws/credentials
+      - /aws/credentials
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["aws_access_key_id", "aws_secret_access_key"]
+        condition: or
+---
+id: ssh-private-key
+info:
+  name: SSH 私钥暴露
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /.ssh/id_rsa
+      - /id_rsa
+      - /server.key
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PRIVATE KEY-----"]
+---
+id: npmrc-token
+info:
+  name: .npmrc 令牌暴露
+  severity: high
+  category: 敏感信息泄露
+requests:
+  - path: /.npmrc
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["_authToken", "//registry.npmjs.org"]
+        condition: or
+---
+id: terraform-state
+info:
+  name: Terraform state 文件暴露 (含明文凭据)
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /terraform.tfstate
+      - /.terraform/terraform.tfstate
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["\"terraform_version\"", "\"resources\""]
+        condition: or
+---
+id: kube-config
+info:
+  name: Kubernetes kubeconfig 暴露
+  severity: critical
+  category: 敏感信息泄露
+requests:
+  - paths:
+      - /.kube/config
+      - /config/kube.conf
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["apiVersion", "client-certificate-data", "clusters"]
+        condition: and
+---
+id: ds-store-file
+info:
+  name: .DS_Store 目录索引泄露
+  severity: low
+  category: 敏感信息泄露
+requests:
+  - path: /.DS_Store
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: all
+        words: ["Bud1"]

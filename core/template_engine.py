@@ -109,8 +109,10 @@ class TemplateRunner:
                 url = self.s.url(p) if p else self.s.target
                 if method == "POST":
                     r = self.s.post(url, data=body, headers=headers)
-                else:
+                elif headers:
                     r = self.s.get(url, headers=headers)
+                else:
+                    r = self.s.probe_get(url)   # 幂等 GET 走共享缓存，去重
                 if r is None:
                     continue
                 if self._eval(matchers, cond, r):
