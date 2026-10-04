@@ -25,6 +25,15 @@ random_agent = false
 # 带外探测 canary（替换为你自己的 collaborator 域名）
 canary = oob.canary.example
 
+# v12 PoC 自动化验证
+# 默认：内置应急集 + 指纹匹配的库模板；全部执行用 poc_all = true
+poc_all = false
+poc_only = false
+# poc_dirs = pocs/custom
+# poc_ids = wvs-log4shell-cve-2021-44228
+# poc_tags = cve,rce
+# poc_severity = critical,high
+
 # 被动模式（只做非侵入式检测）
 passive = false
 

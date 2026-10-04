@@ -34,7 +34,7 @@ SCANS = {}
 
 PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebVulnScanner v11</title>
+<title>WebVulnScanner v12</title>
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--mut:#8b949e;
 --acc:#58a6ff;--crit:#f85149;--high:#ff7b72;--med:#d29922;--low:#3fb950;--info:#8b949e}
@@ -70,8 +70,8 @@ vertical-align:top}th{color:var(--mut);font-weight:500}
 border-radius:6px;font-size:12px;margin-bottom:14px}
 a{color:var(--acc)}
 </style></head><body><div class="wrap">
-<h1>🛡️ WebVulnScanner v11</h1>
-<div class="sub">检测/评估型扫描器 · 仅供授权渗透测试使用</div>
+<h1>🛡️ WebVulnScanner v12</h1>
+<div class="sub">检测/评估型扫描器 + 自动化 PoC 验证 · 仅供授权渗透测试使用</div>
 <div class="warn">⚠ 请确认你已获得目标系统的书面授权。未授权扫描属于违法行为。</div>
 <div class="card">
   <label>目标 URL</label>
@@ -83,8 +83,12 @@ a{color:var(--acc)}
   </div>
   <div class="opts">
     <label><input type="checkbox" id="passive"> 被动模式</label>
+    <label><input type="checkbox" id="poc"> PoC 自动化验证</label>
+    <label><input type="checkbox" id="pocall"> PoC 全库扫描</label>
     <label><input type="checkbox" id="authorized"> 我已获得授权</label>
   </div>
+  <label>PoC 标签筛选（可选，逗号分隔，如 cve,rce）</label>
+  <input type="text" id="poc_tags" placeholder="留空=内置应急集+指纹匹配">
   <button id="go" onclick="startScan()">开始扫描</button>
 </div>
 <div class="card" id="progress" style="display:none">
@@ -109,7 +113,10 @@ function startScan(){
   fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({target:t,threads:+document.getElementById('threads').value,
     rate:+document.getElementById('rate').value,max_urls:+document.getElementById('maxurls').value,
-    passive:document.getElementById('passive').checked})})
+    passive:document.getElementById('passive').checked,
+    poc:document.getElementById('poc').checked,
+    poc_all:document.getElementById('pocall').checked,
+    poc_tags:document.getElementById('poc_tags').value.trim()})})
    .then(r=>r.json()).then(d=>{listen(d.id);})
    .catch(e=>{alert('启动失败:'+e);document.getElementById('go').disabled=false;});
 }
@@ -166,8 +173,12 @@ def scan():
         rate=float(data.get("rate", 0)),
         max_urls=int(data.get("max_urls", 50)),
         passive=bool(data.get("passive", False)),
+        poc_all=bool(data.get("poc_all", False)),
+        poc_tags=[data.get("poc_tags", "")] if data.get("poc_tags") else [],
         skip={"subdomain"},   # Web UI 默认跳过子域名枚举（耗时）
     )
+    if not data.get("poc"):
+        cfg.skip.add("poc")     # 未勾选 PoC 验证时跳过该模块
     sid = uuid.uuid4().hex[:12]
     q = queue.Queue()
     SCANS[sid] = {"q": q, "result": None, "done": False}

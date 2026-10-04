@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WebVulnScanner v11.0 — 全功能 Web 漏洞扫描工具
+WebVulnScanner v12.0 — 全功能 Web 漏洞扫描工具（含自动化 PoC 验证）
 Author : 火柴
 GitHub : https://github.com/huocai250
 Warning: 仅供授权渗透测试与安全研究使用，未经授权扫描属于违法行为！
@@ -30,7 +30,7 @@ from utils.report import (print_terminal, save_json, save_html,
 def parse_args():
     p = argparse.ArgumentParser(
         prog="webscanner",
-        description="WebVulnScanner v11.0 — 仅供授权渗透测试使用",
+        description="WebVulnScanner v12.0 — 仅供授权渗透测试使用",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument("target", nargs="?", help="目标 URL，例如 https://example.com")
@@ -67,6 +67,22 @@ def parse_args():
     scope.add_argument("--subdomain-wordlist", help="自定义子域名字典")
     scope.add_argument("--plugins", metavar="DIR", help="插件目录（热加载自定义模块）")
     scope.add_argument("--templates", metavar="DIR", help="额外 YAML 模板目录（追加签名规则）")
+
+    poc = p.add_argument_group("PoC 自动化验证（v12）")
+    poc.add_argument("--pocs", action="append", default=[], metavar="DIR",
+                     help="额外 PoC 模板目录（nuclei 兼容 YAML），可多次")
+    poc.add_argument("--poc", action="append", default=[], metavar="ID|TAG",
+                     help="只运行指定 PoC id 或 tag，可多次/逗号分隔")
+    poc.add_argument("--poc-tags", action="append", default=[], metavar="TAGS",
+                     help="按标签筛选 PoC（如 cve,rce,panel），可多次")
+    poc.add_argument("--poc-severity", action="append", default=[], metavar="SEV",
+                     help="按严重级筛选 PoC（critical,high,medium,low,info）")
+    poc.add_argument("--poc-all", action="store_true",
+                     help="执行全部 PoC 模板（默认仅内置应急集+指纹匹配）")
+    poc.add_argument("--poc-only", action="store_true",
+                     help="只执行 PoC 扫描，跳过其它模块")
+    poc.add_argument("--list-pocs", action="store_true",
+                     help="列出 PoC 模板库清单后退出")
 
     out = p.add_argument_group("输出")
     out.add_argument("-o", "--output", help="JSON 报告")
@@ -117,6 +133,8 @@ def build_config(args, target: str) -> ScanConfig:
     ov("canary", args.canary); ov("wordlist_file", args.wordlist)
     ov("subdomain_wordlist", args.subdomain_wordlist); ov("plugins_dir", args.plugins)
     ov("templates_dir", args.templates); ov("max_requests", args.max_requests)
+    ov("poc_dirs", args.pocs); ov("poc_ids", args.poc)
+    ov("poc_tags", args.poc_tags); ov("poc_severity", args.poc_severity)
     ov("json_out", args.output); ov("html_out", args.html); ov("md_out", args.md)
     ov("csv_out", args.csv); ov("log_out", args.log)
 
@@ -127,6 +145,9 @@ def build_config(args, target: str) -> ScanConfig:
     if args.auto_report:  cfg.auto_report = True
     if args.scope:        cfg.scope = args.scope
     if args.cookie:       cfg.cookies = parse_cookies(args.cookie)
+    if args.poc_all:      cfg.poc_all = True
+    if args.poc_only:     cfg.poc_only = True
+    if args.list_pocs:    cfg.list_pocs = True
     if args.header:
         hdrs = dict(cfg.headers)
         for h in args.header:
@@ -194,7 +215,7 @@ def run_single(args):
     from core.engine import run_scan, total_checks
     log("INFO", f"作用域: {', '.join(cfg.scope) or cfg.host()} | canary: {cfg.canary}")
     log("INFO", f"内置检测规则/签名: {Colors.BOLD}{total_checks(cfg)}+{Colors.RESET} 条"
-                f"（模板 + 敏感路径 + 指纹 + 载荷 + 端口 + 字典）")
+                f"（模板 + 敏感路径 + 指纹 + 载荷 + 端口 + 字典 + PoC）")
     log("INFO", f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     result = run_scan(cfg, verbose=True)
@@ -234,6 +255,13 @@ def run_targets_file(args):
 
 def main():
     args = parse_args()
+
+    if args.list_pocs:
+        from modules.poc import list_pocs
+        list_pocs(extra_dirs=args.pocs,
+                  tag=",".join(args.poc_tags) if args.poc_tags else None,
+                  quiet=args.quiet)
+        return
 
     if args.web:
         from webui.app import main as web_main

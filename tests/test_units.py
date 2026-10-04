@@ -373,6 +373,131 @@ def test_total_checks_v11():
     assert len(PLAN) >= 60
 
 
+# ---------------- v12: PoC DSL 匹配器 ---------------- 
+def test_poc_dsl_eval():
+    from core.poc_engine import dsl_match
+    fields = {"status_code": 200, "body": "hello world abc",
+              "all_headers": "Server: Nginx", "content_length": 100}
+    assert dsl_match("status_code == 200", fields) is True
+    assert dsl_match("status_code != 404", fields) is True
+    assert dsl_match("len(body) > 5 && contains(body, 'world')", fields) is True
+    assert dsl_match("contains(body, 'zzz')", fields) is False
+    assert dsl_match("body =~ 'h.llo'", fields) is True
+    assert dsl_match("body !~ 'zzz'", fields) is True
+    assert dsl_match("contains(to_lower(all_headers), 'server: nginx')", fields) is True
+    assert dsl_match("content_length >= 100 && status_code <= 200", fields) is True
+    # 未知函数/语法错误不应抛异常，返回 False
+    assert dsl_match("evil_func(body) == 1", fields) is False
+    assert dsl_match("body ===", fields) is False
+
+
+def test_poc_helpers():
+    from core.poc_engine import _resolve_helpers, _hexdec, _b64
+    assert _resolve_helpers("{{BaseURL}}/api", {"BaseURL": "http://h"}) == "http://h/api"
+    assert _resolve_helpers("x{{base64('a')}}", {}) == "xYQ=="
+    assert _resolve_helpers("{{hex_decode('4142')}}", {}) == "AB"
+    assert len(_resolve_helpers("{{randstr(6)}}", {})) == 6
+    assert _resolve_helpers("no placeholders", {}) == "no placeholders"
+    assert _b64("a") == "YQ=="
+    assert _hexdec("4142") == "AB"
+
+
+def test_poc_path_list_normalization():
+    from core.poc_engine import PocRunner
+
+    class FakeScanner:
+        target = "http://127.0.0.1:1"
+        def url(self, p):
+            return f"{self.target}/{p.lstrip('/')}"
+    runner = PocRunner(FakeScanner(), [])
+    # path 既可以是字符串，也可以是列表
+    req = {"method": "GET", "path": ["/a", "/b"]}
+    out = runner._build_request(req, {})
+    assert len(out) == 2
+    assert out[0][1] == "http://127.0.0.1:1/a"
+    assert out[1][1] == "http://127.0.0.1:1/b"
+    req2 = {"method": "GET", "path": "/single"}
+    out2 = runner._build_request(req2, {})
+    assert len(out2) == 1 and out2[0][1] == "http://127.0.0.1:1/single"
+    req3 = {"method": "GET", "paths": ["/x", "/y"]}
+    out3 = runner._build_request(req3, {})
+    assert [u for _, u, _, _ in out3] == ["http://127.0.0.1:1/x", "http://127.0.0.1:1/y"]
+
+
+def test_poc_payload_cap():
+    from core.poc_engine import PocRunner
+
+    class FakeScanner:
+        target = "http://127.0.0.1:1"
+        def url(self, p):
+            return f"{self.target}/{p.lstrip('/')}"
+    runner = PocRunner(FakeScanner(), [])
+    req = {"attack": "clusterbomb",
+           "payloads": {"a": [str(i) for i in range(100)],
+                        "b": [str(i) for i in range(100)]}}
+    combos = runner._payload_combos(req)
+    assert len(combos) <= runner.MAX_PAYLOAD_COMBOS
+    assert len(combos) == 500   # 100x100 被截断到 500
+
+
+def test_poc_json_extract():
+    from core.poc_engine import _json_get
+    data = {"data": {"users": [{"name": "admin"}]}}
+    assert _json_get(data, "data.users[0].name") == "admin"
+    assert _json_get(data, "data.missing") is None
+
+
+def test_poc_library_size():
+    from modules.poc import load_library, poc_stats
+    tpls = load_library()
+    stats = poc_stats(tpls)
+    assert stats["total"] >= 1000        # 1000+ PoC 模板
+    assert stats["runnable"] >= 1000
+    sev = stats["severity"]
+    assert sev.get("critical", 0) > 100  # 高危/严重级覆盖面
+
+
+def test_poc_library_no_duplicate_ids():
+    from modules.poc import load_library
+    tpls = load_library()
+    ids = [t.get("id") for t in tpls]
+    assert len(ids) == len(set(ids))   # 自定义目录与内置库去重
+
+
+def test_list_pocs_tag_filter():
+    import contextlib, io
+    from modules.poc import list_pocs
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        tpls = list_pocs(tag="thinkphp")
+    assert tpls
+    from modules.poc import _tag_list
+    assert all("thinkphp" in _tag_list(t.get("info") or {}) for t in tpls)
+
+
+def test_poc_only_plan():
+    from core.config import ScanConfig
+    from core.engine import build_plan, PoCScanner
+    cfg = ScanConfig(target="http://x", poc_only=True)
+    plan = build_plan(cfg)
+    assert len(plan) == 1 and plan[0] is PoCScanner
+
+
+def test_poc_only_overrides_passive():
+    from core.config import ScanConfig
+    from core.engine import build_plan, PoCScanner
+    # --poc-only 与 --passive 同时给出时，PoC 仍应执行（显式意图优先）
+    cfg = ScanConfig(target="http://x", poc_only=True, passive=True)
+    plan = build_plan(cfg)
+    assert plan == [PoCScanner]
+
+
+def test_total_checks_v12():
+    from core.engine import total_checks, PLAN
+    assert total_checks() > 9000          # v12: PoC 库 8600+ 使总量破万
+    assert len(PLAN) >= 62
+
+
 if __name__ == "__main__":
     # 允许不装 pytest 也能跑
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

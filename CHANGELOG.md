@@ -1,4 +1,69 @@
-# 更新日志                                                  
+# 更新日志
+
+## v12.0.1 (fix)
+
+### 🐛 修复
+- 启动横幅仍显示 v11.0 → 修正为 v12.0（63 检测模块 · 8600+ PoC · 10000+ 规则）。
+- `--list-pocs --poc-tags <tag>` 之前只过滤显示、未过滤返回结果，且 CLI 未把
+  标签传给清单函数 → 现按标签正确筛选（如 thinkphp 仅列 12 条）。
+- `--poc-only` 与 `--passive` 同时给出时 PoC 模块被被动过滤掉 → 显式
+  `--poc-only` 优先，仍执行 PoC 扫描。
+- 自定义 `--pocs` 目录与内置库模板 id 重复时会重复执行 → 加载时全局去重
+  （自定义模板优先）。
+- 缺失 `pocs/index.json` 时只加载内置应急集 → 回退为全量实时解析
+  `pocs/nuclei`（较慢但可用，可用 build_poc_index.py 重建索引）。
+- PoC `size` 匹配器在非 2xx 响应下可能误算内容长度 → 统一取实际响应体长度。
+- `list_pocs()` 返回全库而非筛选结果 → 现返回过滤后的模板列表。
+
+### ✅ 回归
+- 单元测试 41 → 44（新增：库去重、--list-pocs 标签筛选、--poc-only 覆盖
+  --passive），44/44 通过。
+- 全库 8,600 模板对本地靶机回归：0 异常，16.5k 请求/26s。
+
+---
+
+## v12.0.0
+
+### ✨ PoC 自动化验证（核心新增）
+- **PoC 验证引擎** `core/poc_engine.py`：nuclei 兼容子集，支持 `http:` 模板、
+  raw 原始请求（含列表）、多请求串联、variables/helper（{{BaseURL}}、
+  {{randstr}}、{{base64()}}、{{hex_decode()}} 等）、DSL 匹配器（白名单求值）、
+  extractors（regex/word/kval/json + internal 跨请求变量）、payloads 模糊测试
+  （batteringram/pitchfork/clusterbomb，单模板 500 组合上限）、req-condition、
+  stop-at-first-match、cookie 复用控制、redirects 控制。
+- **PoC 扫描模块** `modules/poc.py`：内置应急集 + 指纹匹配的库模板默认执行；
+  `--poc-only` 只跑 PoC；`--poc-all` 全库扫描；`--poc/--poc-tags/--poc-severity`
+  筛选；`--pocs DIR` 追加自定义模板；`--list-pocs` 查看库清单。
+- **内置 PoC 模板库 8,600+**：`pocs/nuclei/`（8,571 个，来自开源
+  nuclei-templates，MIT 协议，已剔除 default-logins/token-spray/
+  credential-stuffing 口令爆破类）+ `pocs/builtin/`（29 个中文应急模板：
+  Log4Shell、Spring4Shell、Spring Cloud Gateway、Shiro、Struts2 S2-045/057、
+  ThinkPHP、Confluence CVE-2021-26084/CVE-2022-26134、PHPUnit eval-stdin、
+  ownCloud CVE-2023-49103、Fastjson、WebLogic SSRF、Actuator/Swagger/GraphQL/
+  Druid/Nacos/phpMyAdmin/备份包等）。
+- **预构建索引** `pocs/index.json`（13MB，8,600 模板秒级加载）+
+  `tools/build_poc_index.py` 重建工具 + `pocs/STATS.json` 统计。
+- **OOB 探测提示**：模板含 `{{interactsh-url}}` 且带内未命中时，自动记录
+  "已发送 OOB 探测" 信息级发现，提示到 collaborator 确认回连。
+
+### 🏗️ 其它新增
+- **Web UI 升级 v12**：新增 "PoC 自动化验证 / PoC 全库扫描 / PoC 标签筛选" 选项。
+- CLI 新增 `--pocs / --poc / --poc-tags / --poc-severity / --poc-all /
+  --poc-only / --list-pocs`；`scanner.cfg.example` 增加 PoC 配置项。
+- 启动展示的规则总量包含 PoC 库（10000+）。
+
+### ⚙️ 工程与健壮性
+- 全库 8,600 模板对本地靶机回归：**0 异常**、16.5k 请求/26s（32 线程）；
+  作用域锁正确拦截模板中的第三方 API、云元数据（169.254.169.254）、
+  内网/保留地址与 OAST 域名。
+- 单元测试 41/41 通过（新增 DSL/helper/path 归一化/payload 上限/库规模/PoC-only
+  计划等用例）。
+
+### ⛔ 安全边界（一以贯之）
+PoC 为**验证型**：默认载荷为无害标记/版本指纹/回显式探测，不包含破坏性利用、
+数据窃取、持久化与口令爆破；OOB 需自建 collaborator；仅限授权目标使用。
+
+---
 
 ## v11.0.0
 

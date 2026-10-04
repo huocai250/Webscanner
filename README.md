@@ -1,4 +1,4 @@
-# WebVulnScanner v11.0
+# WebVulnScanner v12.0
 
 > **全功能 Web 漏洞扫描工具**
 > Author: 火柴 | GitHub: [huocai250](https://github.com/huocai250)
@@ -8,11 +8,11 @@ WebVulnScanner 是一款**检测 / 评估型**安全扫描器（与 OWASP ZAP、
 它探测目标是否存在常见漏洞、梳理攻击面并给出整改建议，**不包含利用、提权、
 数据窃取或持久化功能**（详见「关于漏洞利用」）。请仅在已获得书面授权的目标上使用。
 
-**v11 亮点**：62 个检测模块、内置 **1500+ 检测规则/签名**；在已很完整的注入面之外，新增 HTTP 参数污染、动词篡改/WebDAV、PHP 包装器/LFI 向量、DOM XSS 静态分析、CORS 高级绕过、会话固定、WebSocket 检测、全站 PII/密钥深扫、安全头策略深度、敏感页缓存等模块；软 404 改用相似度识别、新增 `--max-requests` 请求预算等优化。
+**v12 亮点**：63 个检测模块 + **PoC 自动化验证引擎**（兼容 nuclei 模板语法），内置 **8600+ PoC 模板**（含 1700+ 高危/严重 CVE 验证）；默认执行内置应急集（Log4Shell / Spring4Shell / Shiro / Struts2 / ThinkPHP / Fastjson / WebLogic / Confluence 等）+ 指纹匹配的库模板，可用 `--poc-all` 全库扫描。v11 的 62 个模块与 1500+ 检测规则全部保留。
 
 ---
 
-## 检测模块（62 个）
+## 检测模块（63 个）
 
 **信息收集与指纹**：爬虫、信息收集、指纹识别（90+ 规则）、版本漏洞提示、robots/sitemap/well-known 情报、WebSocket/实时端点发现、子域名枚举、子域名接管指纹。
 
@@ -24,10 +24,68 @@ WebVulnScanner 是一款**检测 / 评估型**安全扫描器（与 OWASP ZAP、
 
 **主动扫描**：端口扫描（68 高危端口）、目录枚举。
 
+**v12 新增**：**PoC 自动化验证** `modules/poc.py` —— 8,600+ nuclei 兼容 PoC 模板
+（cves / exposed-panels / misconfiguration / vulnerabilities / exposures / takeovers
+等类别，已剔除 default-logins、token-spray、credential-stuffing 等口令爆破类）。
+
 > 重型模块请求量较大，可用 `--fast`、`--skip <模块>` 或 `--max-requests N`（请求预算）控制开销。
 
 > 启动时会显示实际加载的**内置检测规则/签名总量**（模板 + 敏感路径 + 指纹 +
-> 载荷 + 端口 + 字典），当前 **1000+**，且可通过模板持续扩展。
+> 载荷 + 端口 + 字典 + PoC），当前 **10000+**，且可通过模板持续扩展。
+
+---
+
+## PoC 自动化验证（v12 核心）🆕
+
+v12 内置 **nuclei 兼容的 PoC 引擎**（`core/poc_engine.py`）：
+
+- 支持 `http:` 模板：method / path / raw / headers / body / matchers / extractors
+- 多请求串联、`{{BaseURL}}` 等变量与 helper（`{{randstr}}`、`{{base64()}}`、
+  `{{hex_decode()}}` 等）
+- DSL 匹配器（`contains()`、`len()`、`regex()`、`to_lower()` 等，白名单求值）
+- payload 模糊测试（batteringram / pitchfork / clusterbomb，单模板上限 500 组合）
+- internal extractor 提取变量并跨请求引用、req-condition、stop-at-first-match
+- OOB 探测：`{{interactsh-url}}` 自动映射到 `--canary` 域名（需自建 collaborator
+  观测回连）
+- 预构建索引 `pocs/index.json`（8,600+ 模板秒级加载），`tools/build_poc_index.py`
+  可重建
+
+### 用法
+
+```bash
+# 默认：内置应急集 + 指纹匹配的库模板（推荐，请求量小）
+python main.py https://example.com
+
+# 只做 PoC 扫描
+python main.py https://example.com --poc-only
+
+# 全库扫描（8,600+ 模板，请求量大，请配合 --rate / --max-requests）
+python main.py https://example.com --poc-all --rate 20 --max-requests 5000
+
+# 按标签/严重级/指定 id 筛选
+python main.py https://example.com --poc-tags cve,rce --poc-severity critical,high
+python main.py https://example.com --poc wvs-log4shell-cve-2021-44228
+
+# 查看模板库清单
+python main.py --list-pocs
+python main.py --list-pocs --poc-tags thinkphp
+
+# 追加自定义 PoC 模板（nuclei 兼容 YAML）
+python main.py https://example.com --pocs my_pocs
+```
+
+### 模板库来源与归属
+
+内置 8,571 个 PoC 模板来自 [ProjectDiscovery nuclei-templates](https://github.com/projectdiscovery/nuclei-templates)
+（MIT 协议，见 `pocs/nuclei/LICENSE.md`），已剔除口令爆破/用户枚举/令牌喷洒等类别；
+29 个内置应急模板（`pocs/builtin/`）为项目自带，聚焦国内外主流高危漏洞。
+
+### 安全边界（与 v1~v11 一以贯之）
+
+PoC 引擎只做**漏洞验证**：默认载荷为无害标记/版本指纹/回显式探测，不包含
+破坏性利用（数据清除、持久化、木马落地）、数据窃取或口令爆破。`--canary`
+默认值 `oob.canary.example` 为占位域名，OOB 类模板只有在配置你自己的
+collaborator 后才能观测确认。请仅对已获**书面授权**的目标使用。
 
 ---
 

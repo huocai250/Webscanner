@@ -1,0 +1,16 @@
+{
+  "total": 8600,
+  "runnable": 8595,
+  "severity": {
+    "high": 2113,
+    "critical": 1712,
+    "low": 440,
+    "medium": 2146,
+    "info": 2149,
+    "unknown": 40
+  },
+  "sources": {
+    "nuclei": 8571,
+    "builtin": 29
+  }
+}
