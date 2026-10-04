@@ -1,0 +1,403 @@
+id: wvs-spring-actuator-exposure
+info:
+  name: Spring Boot Actuator 暴露
+  author: huocai250
+  severity: high
+  category: 信息泄露
+  description: Actuator 管理端点未授权访问，可能泄露环境变量/配置/堆转储。
+  tags: spring,actuator,exposure
+  metadata:
+    product: [springboot, actuator]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator"
+      - "{{BaseURL}}/actuator/health"
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/actuator/heapdump"
+      - "{{BaseURL}}/env"
+      - "{{BaseURL}}/jolokia"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["activeProfiles", "spring.application", "heapdump", "jolokia"]
+        part: body
+      - type: word
+        words: ["application/json"]
+        part: header
+    stop-at-first-match: true
+---
+id: wvs-swagger-ui-exposure
+info:
+  name: Swagger / OpenAPI 文档暴露
+  author: huocai250
+  severity: medium
+  category: 信息泄露
+  description: API 文档端点未授权访问，暴露接口定义与参数。
+  tags: swagger,openapi,api,exposure
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger-ui.html"
+      - "{{BaseURL}}/swagger-ui/index.html"
+      - "{{BaseURL}}/v2/api-docs"
+      - "{{BaseURL}}/v3/api-docs"
+      - "{{BaseURL}}/api/swagger-ui.html"
+      - "{{BaseURL}}/api-docs"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["Swagger UI", "swagger", "openapi"]
+        part: all
+      - type: regex
+        regex: ['"(swagger|openapi|paths|info)"\s*:']
+    stop-at-first-match: true
+---
+id: wvs-graphql-introspection
+info:
+  name: GraphQL 端点开放（可 introspection）
+  author: huocai250
+  severity: medium
+  category: 配置错误
+  description: GraphQL 端点接受 introspection 查询，可枚举 schema。
+  tags: graphql,api,exposure
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/v1/graphql"
+      - "{{BaseURL}}/api/graphql"
+      - "{{BaseURL}}/query"
+    headers:
+      Content-Type: application/json
+    body: '{"query":"{__schema{types{name}}}"}'
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["__schema", "types"]
+    stop-at-first-match: true
+---
+id: wvs-phpinfo-exposure
+info:
+  name: phpinfo 页面暴露
+  author: huocai250
+  severity: low
+  category: 信息泄露
+  description: 常见的 phpinfo 文件可直接访问，泄露 PHP 环境与扩展信息。
+  tags: phpinfo,exposure,info
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/phpinfo.php"
+      - "{{BaseURL}}/info.php"
+      - "{{BaseURL}}/test.php"
+      - "{{BaseURL}}/php_info.php"
+      - "{{BaseURL}}/i.php"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["PHP Version"]
+    stop-at-first-match: true
+---
+id: wvs-phpmyadmin-panel
+info:
+  name: phpMyAdmin 面板暴露
+  author: huocai250
+  severity: medium
+  category: 面板暴露
+  description: phpMyAdmin 登录面板可直接访问，存在弱口令/漏洞利用面。
+  tags: phpmyadmin,panel,exposure
+  metadata:
+    product: [phpmyadmin]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/phpmyadmin/"
+      - "{{BaseURL}}/phpMyAdmin/"
+      - "{{BaseURL}}/pma/"
+      - "{{BaseURL}}/mysql/"
+      - "{{BaseURL}}/db/"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302]
+      - type: word
+        words: ["phpMyAdmin", "pma_username", "PMA_token"]
+        part: all
+    stop-at-first-match: true
+---
+id: wvs-wordpress-panel
+info:
+  name: WordPress 后台/入口暴露
+  author: huocai250
+  severity: low
+  category: 面板暴露
+  description: 识别 WordPress 站点及其登录入口，便于后续专项检测。
+  tags: wordpress,cms,panel
+  metadata:
+    product: [wordpress]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-login.php"
+      - "{{BaseURL}}/wp-admin/"
+      - "{{BaseURL}}/wp-json/"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["WordPress", "wp-login", "wp-json"]
+        part: body
+      - type: regex
+        regex: ['"name":"WordPress"']
+    stop-at-first-match: true
+---
+id: wvs-django-admin-panel
+info:
+  name: Django Admin 面板暴露
+  author: huocai250
+  severity: medium
+  category: 面板暴露
+  description: Django 管理后台可访问，存在弱口令/未授权风险。
+  tags: django,panel,exposure
+  metadata:
+    product: [django]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/admin/"
+      - "{{BaseURL}}/admin/login/"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302]
+      - type: word
+        words: ["Django", "admin", "csrfmiddlewaretoken"]
+        part: all
+    stop-at-first-match: true
+---
+id: wvs-druid-unauth
+info:
+  name: Druid 监控面板未授权
+  author: huocai250
+  severity: high
+  category: 面板暴露
+  description: Druid 连接池监控面板未授权访问，泄露 SQL/会话/URL 明细。
+  tags: druid,panel,exposure,unauthorized
+  metadata:
+    product: [druid]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/druid/index.html"
+      - "{{BaseURL}}/druid/sql.html"
+      - "{{BaseURL}}/druid/websession.html"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["Druid", "DruidStatViewServlet", "StatViewServlet"]
+    stop-at-first-match: true
+---
+id: wvs-nacos-unauth
+info:
+  name: Nacos 未授权访问
+  author: huocai250
+  severity: high
+  category: 未授权访问
+  description: Nacos 用户列表接口未授权可访问，存在配置/凭据泄露风险。
+  tags: nacos,unauthorized,exposure
+  metadata:
+    product: [nacos]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/nacos/v1/auth/users?pageNo=1&pageSize=9"
+      - "{{BaseURL}}/nacos/v1/console/health/readiness"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["username", "password"]
+        part: body
+      - type: word
+        words: ["Nacos"]
+        part: body
+    stop-at-first-match: true
+---
+id: wvs-elasticsearch-unauth
+info:
+  name: Elasticsearch 未授权访问
+  author: huocai250
+  severity: medium
+  category: 未授权访问
+  description: Elasticsearch 集群接口未授权可访问。
+  tags: elasticsearch,unauthorized,exposure
+  metadata:
+    product: [elasticsearch]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/_cluster/health"
+      - "{{BaseURL}}/_nodes"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["cluster_name", "status"]
+    stop-at-first-match: true
+---
+id: wvs-jenkins-version
+info:
+  name: Jenkins 面板/版本暴露
+  author: huocai250
+  severity: medium
+  category: 面板暴露
+  description: Jenkins 实例可访问并暴露版本头，可据此核对已知 CVE。
+  tags: jenkins,panel,exposure
+  metadata:
+    product: [jenkins]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+      - "{{BaseURL}}/login"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["X-Jenkins", "Jenkins"]
+        part: header
+      - type: word
+        words: ["Jenkins", "Manage Jenkins", "Dashboard"]
+        part: body
+    stop-at-first-match: true
+---
+id: wvs-ds-store-exposure
+info:
+  name: .DS_Store 文件泄露
+  author: huocai250
+  severity: medium
+  category: 信息泄露
+  description: 根目录 .DS_Store 可直接下载，可能泄露目录结构。
+  tags: exposure,dsstore,info
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.DS_Store"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        words: ["application/octet-stream", "application/x-apple-diskimage"]
+        part: header
+---
+id: wvs-backup-files
+info:
+  name: 常见备份/源码压缩包暴露
+  author: huocai250
+  severity: high
+  category: 信息泄露
+  description: 常见网站备份包直接可下载，可能包含源码与配置。
+  tags: backup,exposure,zip
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/backup.zip"
+      - "{{BaseURL}}/backup.tar.gz"
+      - "{{BaseURL}}/www.zip"
+      - "{{BaseURL}}/web.zip"
+      - "{{BaseURL}}/site.zip"
+      - "{{BaseURL}}/data.zip"
+      - "{{BaseURL}}/db.zip"
+      - "{{BaseURL}}/database.sql"
+      - "{{BaseURL}}/1.sql"
+      - "{{BaseURL}}/bak.zip"
+      - "{{BaseURL}}/code.zip"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["PK", "application/zip", "application/x-gzip", "text/plain"]
+        part: all
+      - type: regex
+        regex: ["CREATE TABLE|INSERT INTO|DROP TABLE"]
+    stop-at-first-match: true
+---
+id: wvs-gitlab-panel
+info:
+  name: GitLab 面板识别
+  author: huocai250
+  severity: low
+  category: 面板暴露
+  description: 识别 GitLab 实例，便于核对已知 CVE 与配置问题。
+  tags: gitlab,panel,cms
+  metadata:
+    product: [gitlab]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/users/sign_in"
+      - "{{BaseURL}}/explore"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["GitLab", "content=\"GitLab"]
+        part: body
+      - type: word
+        words: ["gitlab"]
+        part: header
+    stop-at-first-match: true
+---
+id: wvs-laravel-telescope
+info:
+  name: Laravel Telescope 面板暴露
+  author: huocai250
+  severity: high
+  category: 面板暴露
+  description: Laravel Telescope 调试面板未授权访问，泄露请求/异常/凭据相关信息。
+  tags: laravel,telescope,debug,exposure
+  metadata:
+    product: [laravel]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/telescope"
+      - "{{BaseURL}}/telescope/requests"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200, 302]
+      - type: word
+        words: ["Telescope", "laravel"]
+        part: all
+    stop-at-first-match: true
+---
+id: wvs-kibana-panel
+info:
+  name: Kibana 面板暴露
+  author: huocai250
+  severity: medium
+  category: 面板暴露
+  description: Kibana 界面可访问，存在 CVE-2019-7609 等历史漏洞利用面。
+  tags: kibana,panel,exposure
+  metadata:
+    product: [kibana]
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/app/kibana"
+      - "{{BaseURL}}/app/discover"
+      - "{{BaseURL}}/status"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words: ["kibana", "Kibana"]
+        part: body
+      - type: word
+        words: ["application/json"]
+        part: header
+    stop-at-first-match: true
