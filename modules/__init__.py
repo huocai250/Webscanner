@@ -11,6 +11,7 @@ from modules.pii            import PIIScanner
 from modules.jssecrets      import JSSecretScanner
 from modules.exposure       import ExposureScanner
 from modules.nuclei         import TemplateScanner
+from modules.poc            import PoCScanner
 from modules.misconfig      import MisconfigScanner
 from modules.frontend       import FrontendScanner
 from modules.dom_xss        import DOMXSSScanner
@@ -60,6 +61,7 @@ __all__ = [
     "PIIScanner", "JSSecretScanner", "ExposureScanner", "TemplateScanner",
     "MisconfigScanner", "FrontendScanner", "DOMXSSScanner", "CSPScanner",
     "CookieScanner", "WellKnownScanner", "TakeoverScanner", "APIDocsScanner",
+    "PoCScanner",
     "WebSocketScanner", "SourceDisclosureScanner", "DebugEndpointScanner",
     "DeserializationScanner", "SessionScanner", "SensitiveCacheScanner",
     "MethodScanner", "VerbTamperingScanner", "GraphQLScanner", "GraphQLDeepScanner",

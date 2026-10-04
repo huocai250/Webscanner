@@ -70,6 +70,15 @@ class ScanConfig:
     # 额外模板目录（在内置 templates/ 之外追加 YAML 签名）
     templates_dir: str | None = None
 
+    # ---- v12: PoC 自动化验证 ----
+    poc_dirs: list = field(default_factory=list)   # 额外 PoC 模板目录（可多个）
+    poc_ids: list = field(default_factory=list)    # 指定 PoC id 或 tag
+    poc_tags: list = field(default_factory=list)   # 按 tag 筛选
+    poc_severity: list = field(default_factory=list)  # 按 severity 筛选
+    poc_all: bool = False                          # 全库扫描（默认仅指纹匹配+内置集）
+    poc_only: bool = False                         # 只运行 PoC 模块
+    list_pocs: bool = False                        # 仅列出 PoC 库清单
+
     # 输出
     json_out: str | None = None
     html_out: str | None = None

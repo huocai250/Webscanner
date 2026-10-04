@@ -13,6 +13,7 @@ from modules import (
     Crawler, InfoGatherer, Fingerprinter, CVEVersionScanner, HeaderChecker,
     HeaderPolicyScanner, SSLChecker, SensitiveInfoScanner, PIIScanner,
     JSSecretScanner, ExposureScanner, TemplateScanner, MisconfigScanner,
+    PoCScanner,
     FrontendScanner, DOMXSSScanner, CSPScanner, CookieScanner, WellKnownScanner,
     TakeoverScanner, APIDocsScanner, WebSocketScanner, SourceDisclosureScanner,
     DebugEndpointScanner, DeserializationScanner, SessionScanner,
@@ -47,6 +48,8 @@ PLAN = [
     NoSQLiScanner, LDAPInjectionScanner, XPathInjectionScanner, XSSScanner,
     SSIScanner, ELInjectionScanner, ProtoPollutionScanner, LFIScanner,
     PHPWrapperScanner, PathTraversalScanner, XXEScanner, SSRFScanner, Log4ShellScanner,
+    # PoC 自动化验证（v12）
+    PoCScanner,
     # 重型主动扫描
     ExposureScanner, SubdomainScanner, PortScanner, DirBuster,
 ]
@@ -70,6 +73,7 @@ DISPLAY = {
     "ssi": "SSI注入", "eli": "表达式注入", "protopollution": "原型链污染", "session": "会话固定",
     "lfi": "LFI/命令注入", "phpwrapper": "PHP包装器", "traversal": "路径穿越",
     "xxe": "XXE注入", "ssrf": "SSRF", "log4shell": "Log4Shell", "exposure": "敏感路径暴露",
+    "poc": "PoC自动化验证",
     "subdomain": "子域名枚举", "ports": "端口扫描", "dirbust": "目录枚举",
 }
 
@@ -110,6 +114,22 @@ def total_checks(cfg=None) -> int:
         n += len(PATTERNS) + len(EXPOSED_FILES)
     except Exception:
         pass
+    # v12: PoC 模板库
+    try:
+        from modules.poc import BUILTIN_DIR, CUSTOM_DIR, INDEX_FILE
+        import json as _json
+        if os.path.isfile(INDEX_FILE):
+            with open(INDEX_FILE, encoding="utf-8") as f:
+                data = _json.load(f)
+            if isinstance(data, dict):
+                data = data.get("templates", [])
+            n += len(data)
+        for d in (BUILTIN_DIR, CUSTOM_DIR):
+            if os.path.isdir(d):
+                from core.poc_engine import load_poc_dirs
+                n += len(load_poc_dirs([d], index_file=None, use_index=False))
+    except Exception:
+        pass
     # 各注入/检测模块的载荷与签名集合（粗略计入）
     try:
         from modules import (sqli, xss, lfi, redirect, traversal, crlf, log4shell,
@@ -141,7 +161,10 @@ def total_checks(cfg=None) -> int:
 
 def build_plan(cfg: ScanConfig):
     """返回本次扫描应运行的模块类列表（含插件、应用 skip/passive）。"""
-    plan = list(PLAN)
+    if getattr(cfg, "poc_only", False):
+        plan = [PoCScanner]
+    else:
+        plan = list(PLAN)
     if cfg.plugins_dir:
         plan += load_plugins(cfg.plugins_dir)
 
@@ -150,7 +173,9 @@ def build_plan(cfg: ScanConfig):
         name = getattr(cls, "name", cls.__name__)
         if name in cfg.skip:
             continue
-        if cfg.passive and not getattr(cls, "passive", False):
+        # --poc-only 为显式意图，优先级高于 --passive 的模块过滤
+        if cfg.passive and not getattr(cls, "passive", False) \
+                and not getattr(cfg, "poc_only", False):
             continue
         selected.append(cls)
     return selected
